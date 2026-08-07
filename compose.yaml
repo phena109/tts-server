@@ -1,0 +1,67 @@
+# Podman Compose (and Docker Compose v2) stack for CosyVoice TTS
+#
+#   podman compose up -d
+#   podman compose down
+#
+# Apple Silicon: forces linux/arm64 (Podman machine VM).
+
+name: cosyvoice-tts
+
+services:
+  tts:
+    image: cosyvoice-tts:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cosyvoice-tts
+    platform: linux/arm64
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      TTS_ENGINE: "${TTS_ENGINE:-cosyvoice}"
+      DEVICE: "${DEVICE:-cpu}"
+      # Model selection — change without rebuilding the image
+      MODEL_NAME: "${MODEL_NAME:-FunAudioLLM/Fun-CosyVoice3-0.5B-2512}"
+      COSYVOICE_MODEL: "${COSYVOICE_MODEL:-}"
+      MODEL_LOCAL_NAME: "${MODEL_LOCAL_NAME:-Fun-CosyVoice3-0.5B}"
+      MODEL_DIR: /models
+      OUTPUT_DIR: /output
+      INPUT_DIR: /input
+      CACHE_DIR: /cache
+      DEFAULT_LANGUAGE: "${DEFAULT_LANGUAGE:-zh}"
+      DEFAULT_SPEAKER: "${DEFAULT_SPEAKER:-default}"
+      OUTPUT_FORMAT: "${OUTPUT_FORMAT:-wav}"
+      MAX_CHARS_PER_CHUNK: "${MAX_CHARS_PER_CHUNK:-200}"
+      DOWNLOAD_SOURCE: "${DOWNLOAD_SOURCE:-huggingface}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      SKIP_MODEL_DOWNLOAD: "${SKIP_MODEL_DOWNLOAD:-false}"
+      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-4}"
+      MKL_NUM_THREADS: "${MKL_NUM_THREADS:-4}"
+    volumes:
+      - tts-models:/models
+      - tts-output:/output
+      - tts-input:/input
+      - tts-cache:/cache
+    restart: unless-stopped
+    # CPU inference can be memory-heavy during first load
+    mem_limit: 8g
+    shm_size: "1g"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+volumes:
+  tts-models:
+    name: cosyvoice-tts-models
+  tts-output:
+    name: cosyvoice-tts-output
+  tts-input:
+    name: cosyvoice-tts-input
+  tts-cache:
+    name: cosyvoice-tts-cache

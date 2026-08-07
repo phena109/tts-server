@@ -1,0 +1,57 @@
+# VCS / IDE
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+.eggs
+dist
+build
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+.venv
+venv
+env
+
+# Local data & secrets (must never enter the image)
+models
+output
+input
+cache
+data
+*.wav
+*.mp3
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.bin
+.env
+.env.*
+!.env.example
+
+# Docs / tests artifacts not needed in runtime image
+docs
+tests
+**/*_test.py
+**/test_*.py
+*.md
+!README.md
+
+# CI / tooling
+.github
+.gitlab-ci.yml
+Makefile
+docker-compose*.yml
+compose.override.yaml

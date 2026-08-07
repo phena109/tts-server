@@ -1,0 +1,41 @@
+# Secrets / local env
+.env
+.env.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Local volume mirrors (repo root only — do not ignore app/models package)
+/models/
+/output/
+/input/
+/cache/
+/data/
+*.wav
+*.mp3
+!assets/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Test / tmp
+tmp/
+.tmpdir/
