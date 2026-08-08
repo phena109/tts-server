@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TTS Server</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>TTS Server</h1>
+    <p class="sub">Web UI for the CosyVoice API</p>
+  </header>
+
+  <section class="card" id="connection">
+    <h2>Connection</h2>
+    <label>
+      API base URL
+      <input id="apiBase" type="url" value="http://localhost:27755" spellcheck="false" />
+    </label>
+    <div class="row">
+      <button type="button" id="btnHealth">Check health</button>
+      <span id="healthStatus" class="status" aria-live="polite">—</span>
+    </div>
+    <pre id="healthDetail" class="meta hidden"></pre>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button type="button" class="tab active" data-tab="quick" role="tab" aria-selected="true">Quick TTS</button>
+    <button type="button" class="tab" data-tab="file" role="tab" aria-selected="false">From file</button>
+    <button type="button" class="tab" data-tab="long" role="tab" aria-selected="false">Long form</button>
+  </nav>
+
+  <section class="card tab-panel active" id="panel-quick" role="tabpanel">
+    <h2>Quick TTS</h2>
+    <p class="hint">POST /tts — short text → audio bytes</p>
+    <label>
+      Text
+      <textarea id="quickText" rows="4" placeholder="你好，我係測試。">你好，我係測試。</textarea>
+    </label>
+    <div class="grid">
+      <label>
+        Language
+        <select id="quickLanguage">
+          <option value="yue" selected>yue (Cantonese)</option>
+          <option value="zh">zh (Mandarin)</option>
+          <option value="en">en</option>
+          <option value="ja">ja</option>
+          <option value="ko">ko</option>
+          <option value="de">de</option>
+          <option value="es">es</option>
+          <option value="fr">fr</option>
+        </select>
+      </label>
+      <label>
+        Speaker
+        <input id="quickSpeaker" type="text" value="default" />
+      </label>
+      <label>
+        Speed
+        <input id="quickSpeed" type="number" min="0.5" max="2" step="0.1" value="1.0" />
+      </label>
+      <label>
+        Format
+        <select id="quickFormat">
+          <option value="wav" selected>wav</option>
+          <option value="mp3">mp3</option>
+        </select>
+      </label>
+    </div>
+    <button type="button" id="btnQuick" class="primary">Synthesize</button>
+  </section>
+
+  <section class="card tab-panel" id="panel-file" role="tabpanel" hidden>
+    <h2>From file</h2>
+    <p class="hint">POST /tts-file — upload a UTF-8 text file → audio</p>
+    <label>
+      Text file
+      <input id="fileInput" type="file" accept=".txt,text/plain" />
+    </label>
+    <div class="grid">
+      <label>
+        Language
+        <select id="fileLanguage">
+          <option value="yue" selected>yue (Cantonese)</option>
+          <option value="zh">zh (Mandarin)</option>
+          <option value="en">en</option>
+          <option value="ja">ja</option>
+          <option value="ko">ko</option>
+        </select>
+      </label>
+      <label>
+        Speaker
+        <input id="fileSpeaker" type="text" value="default" />
+      </label>
+      <label>
+        Speed
+        <input id="fileSpeed" type="number" min="0.5" max="2" step="0.1" value="1.0" />
+      </label>
+      <label>
+        Format
+        <select id="fileFormat">
+          <option value="wav" selected>wav</option>
+          <option value="mp3">mp3</option>
+        </select>
+      </label>
+    </div>
+    <button type="button" id="btnFile" class="primary">Synthesize file</button>
+  </section>
+
+  <section class="card tab-panel" id="panel-long" role="tabpanel" hidden>
+    <h2>Long form</h2>
+    <p class="hint">POST /tts-long — article text or file → single MP3 (chunked)</p>
+    <label>
+      Text (optional if file provided)
+      <textarea id="longText" rows="8" placeholder="Paste a long article…"></textarea>
+    </label>
+    <label>
+      Or text file
+      <input id="longFile" type="file" accept=".txt,text/plain" />
+    </label>
+    <div class="grid">
+      <label>
+        Language
+        <select id="longLanguage">
+          <option value="yue" selected>yue (Cantonese)</option>
+          <option value="zh">zh (Mandarin)</option>
+          <option value="en">en</option>
+        </select>
+      </label>
+      <label>
+        Speaker
+        <input id="longSpeaker" type="text" value="default" />
+      </label>
+      <label>
+        Speed
+        <input id="longSpeed" type="number" min="0.5" max="2" step="0.1" value="1.0" />
+      </label>
+    </div>
+    <button type="button" id="btnLong" class="primary">Synthesize long form</button>
+  </section>
+
+  <section class="card" id="result">
+    <h2>Result</h2>
+    <p id="resultMsg" class="status">No synthesis yet.</p>
+    <pre id="resultMeta" class="meta hidden"></pre>
+    <audio id="player" controls class="hidden"></audio>
+    <div class="row">
+      <a id="downloadLink" class="button hidden" download>Download audio</a>
+    </div>
+  </section>
+
+  <footer>
+    <p>API default port <code>27755</code> · UI port <code>27756</code></p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

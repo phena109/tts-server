@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Container entrypoint: prepare volumes, ensure model, start FastAPI.
+# Container entrypoint: prepare volumes, ensure model, start UI + FastAPI.
+#   API: PORT (default 27755) · UI: UI_PORT (default 27756)
 set -euo pipefail
 
 log() {
@@ -12,7 +13,9 @@ log "TTS container starting"
 
 # Defaults (overridable via environment)
 export HOST="${HOST:-0.0.0.0}"
-export PORT="${PORT:-8000}"
+export PORT="${PORT:-27755}"
+export UI_PORT="${UI_PORT:-27756}"
+export UI_ROOT="${UI_ROOT:-/app/web}"
 export LOG_LEVEL="${LOG_LEVEL:-INFO}"
 export MODEL_DIR="${MODEL_DIR:-/models}"
 export OUTPUT_DIR="${OUTPUT_DIR:-/output}"
@@ -47,6 +50,20 @@ if [[ "${SKIP_MODEL_DOWNLOAD:-false}" != "true" ]]; then
   python -m app.bootstrap ensure-model
 else
   log "SKIP_MODEL_DOWNLOAD=true — not downloading models"
+fi
+
+# Static web UI on a separate port (browser → API on PORT)
+if [[ "${UI_ENABLED:-true}" == "true" ]]; then
+  if [[ -d "${UI_ROOT}" ]]; then
+    log "Starting UI server on ${HOST}:${UI_PORT} (root=${UI_ROOT})"
+    python -m app.ui_server --host "${HOST}" --port "${UI_PORT}" --root "${UI_ROOT}" &
+    UI_PID=$!
+    trap 'log "Stopping UI server"; kill "${UI_PID}" 2>/dev/null || true' EXIT
+  else
+    log "WARNING: UI_ROOT missing at ${UI_ROOT} — UI not started"
+  fi
+else
+  log "UI_ENABLED=false — skipping UI server"
 fi
 
 log "Starting uvicorn on ${HOST}:${PORT} (engine=${TTS_ENGINE})"

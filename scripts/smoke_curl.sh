@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Smoke-test the running TTS API with curl.
+# Smoke-test the running TTS API (and optional web UI) with curl.
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost:8000}"
+BASE_URL="${BASE_URL:-http://localhost:27755}"
+UI_URL="${UI_URL:-http://localhost:27756}"
 OUT_DIR="${OUT_DIR:-./output-smoke}"
 mkdir -p "${OUT_DIR}"
 
 echo "==> GET ${BASE_URL}/health"
 curl -fsS "${BASE_URL}/health" | tee "${OUT_DIR}/health.json"
+echo
+
+if curl -fsS -o /dev/null "${UI_URL}/"; then
+  echo "==> GET ${UI_URL}/ (web UI) OK"
+else
+  echo "==> GET ${UI_URL}/ (web UI) skipped or unreachable"
+fi
 echo
 
 echo "==> POST ${BASE_URL}/tts (yue)"

@@ -1,6 +1,6 @@
 # CosyVoice 3 TTS Server (Podman / Apple Silicon)
 
-Production-ready **text-to-speech API** wrapping [FunAudioLLM CosyVoice 3](https://github.com/FunAudioLLM/CosyVoice) behind a stable FastAPI surface.
+Production-ready **text-to-speech API** wrapping [FunAudioLLM CosyVoice 3](https://github.com/FunAudioLLM/CosyVoice) behind a stable FastAPI surface, plus a barebones **web UI** on a second port.
 
 | Target | Value |
 |--------|--------|
@@ -9,31 +9,34 @@ Production-ready **text-to-speech API** wrapping [FunAudioLLM CosyVoice 3](https
 | Execution | **CPU** in `linux/arm64` container (Podman machine VM) |
 | Python | 3.10 |
 | Default model | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` |
+| API port | **27755** |
+| Web UI port | **27756** |
 
 Models are **never baked into the image**. They download on first run into a mounted volume and survive image rebuilds.
 
-The inference backend is pluggable (`TTS_ENGINE`). Clients talk only to the REST API, so MeloTTS / Fish Speech / Kokoro can be added later without client changes.
+The inference backend is pluggable (`TTS_ENGINE`). REST clients and the bundled web UI both talk to the same FastAPI surface, so MeloTTS / Fish Speech / Kokoro can be added later without client changes.
 
 ---
 
 ## Architecture
 
 ```
-Client
-  │
-  ▼
-FastAPI  (app/api)
-  │
-  ▼
-TTSService  (chunk → synthesize → merge → encode)
-  │
-  ▼
-TTSEngine protocol  (app/engines/base.py)
-  │
-  ├── cosyvoice  (default)  → FunAudioLLM AutoModel
-  ├── melo       (future)
-  ├── fish       (future)
-  └── kokoro     (future)
+Browser UI (:27756)          API clients
+        │                         │
+        └──────────┬──────────────┘
+                   ▼
+            FastAPI  (app/api)  :27755
+                   │
+                   ▼
+            TTSService  (chunk → synthesize → merge → encode)
+                   │
+                   ▼
+            TTSEngine protocol  (app/engines/base.py)
+                   │
+                   ├── cosyvoice  (default)  → FunAudioLLM AutoModel
+                   ├── melo       (future)
+                   ├── fish       (future)
+                   └── kokoro     (future)
 ```
 
 ### Package layout
@@ -49,6 +52,8 @@ app/
   utils/         # Chunking, logging, timing
   main.py        # App factory + lifespan
   bootstrap.py   # ensure-model CLI for entrypoint
+  ui_server.py   # Static web UI (port UI_PORT)
+web/             # Browser UI (vanilla HTML/JS)
 ```
 
 ---
@@ -86,7 +91,8 @@ podman build --platform=linux/arm64 -t cosyvoice-tts:latest .
 podman run -d \
   --name cosyvoice-tts \
   --platform=linux/arm64 \
-  -p 8000:8000 \
+  -p 27755:27755 \
+  -p 27756:27756 \
   -e MODEL_NAME=FunAudioLLM/Fun-CosyVoice3-0.5B-2512 \
   -e COSYVOICE_MODEL=FunAudioLLM/Fun-CosyVoice3-0.5B-2512 \
   -e DEFAULT_LANGUAGE=yue \
@@ -100,6 +106,12 @@ podman run -d \
 ```
 
 First boot downloads the model into `/models` (several GB). Subsequent starts skip the download.
+
+| Service | URL |
+|---------|-----|
+| API | http://localhost:27755 |
+| Web UI | http://localhost:27756 |
+| Health | http://localhost:27755/health |
 
 ### 4. Logs / stop
 
@@ -123,16 +135,47 @@ podman compose logs -f
 podman compose down
 ```
 
+After compose is up: API on **:27755**, UI on **:27756**.
+
 ---
+
+## Web UI
+
+Base URL: `http://localhost:27756`
+
+Barebones static page (no build step) covering the same use cases as the API:
+
+| UI section | API endpoint |
+|------------|--------------|
+| Quick TTS | `POST /tts` |
+| From file | `POST /tts-file` |
+| Long form | `POST /tts-long` |
+| Connection / health | `GET /health` |
+
+**How it runs**
+
+- Files live under `web/` (`index.html`, `styles.css`, `app.js`).
+- Container entrypoint starts `python -m app.ui_server` on `UI_PORT` (default `27756`) when `UI_ENABLED=true`.
+- The page calls the API at `PORT` (default `27755`). The API base URL is editable in the UI and stored in `localStorage`.
+- CORS is already open on the API (`allow_origins=["*"]`), so the browser UI on `:27756` can call `:27755`.
+
+**Local UI only** (no model / no API process):
+
+```bash
+python -m app.ui_server --host 127.0.0.1 --port 27756 --root web
+# open http://127.0.0.1:27756
+```
+
+**Disable UI** in the container: `-e UI_ENABLED=false`.
 
 ## API
 
-Base URL: `http://localhost:8000`
+Base URL: `http://localhost:27755`
 
 ### `GET /health`
 
 ```bash
-curl -s http://localhost:8000/health
+curl -s http://localhost:27755/health
 ```
 
 ```json
@@ -149,7 +192,7 @@ curl -s http://localhost:8000/health
 JSON body → audio bytes (`wav` or `mp3`).
 
 ```bash
-curl -X POST http://localhost:8000/tts \
+curl -X POST http://localhost:27755/tts \
   -H "Content-Type: application/json" \
   -d '{
     "text": "你好，我係測試。",
@@ -179,7 +222,7 @@ Upload a UTF-8 text file; return audio.
 ```bash
 echo '你好，我係測試。今日天氣好好。' > sample.txt
 
-curl -X POST http://localhost:8000/tts-file \
+curl -X POST http://localhost:27755/tts-file \
   -F "file=@sample.txt" \
   -F "language=yue" \
   -F "speaker=default" \
@@ -193,7 +236,7 @@ curl -X POST http://localhost:8000/tts-file \
 Long articles: automatic chunking → per-chunk synthesis → merge → **single MP3**.
 
 ```bash
-curl -X POST http://localhost:8000/tts-long \
+curl -X POST http://localhost:27755/tts-long \
   -H "Content-Type: application/json" \
   -d '{
     "text": "第一段……\n\n第二段……",
@@ -206,7 +249,7 @@ curl -X POST http://localhost:8000/tts-long \
 Or multipart:
 
 ```bash
-curl -X POST http://localhost:8000/tts-long \
+curl -X POST http://localhost:27755/tts-long \
   -F "file=@article.txt" \
   -F "language=zh" \
   --output article.mp3
@@ -237,7 +280,10 @@ All settings are environment variables (see also `.env.example`).
 | `DOWNLOAD_SOURCE` | `huggingface` | `huggingface` or `modelscope` |
 | `HF_TOKEN` | _(empty)_ | Optional Hugging Face token |
 | `SKIP_MODEL_DOWNLOAD` | `false` | Fail if model missing instead of downloading |
-| `HOST` / `PORT` | `0.0.0.0` / `8000` | Bind address |
+| `HOST` / `PORT` | `0.0.0.0` / `27755` | API bind address |
+| `UI_PORT` | `27756` | Web UI bind port |
+| `UI_ENABLED` | `true` | Start static UI server in entrypoint |
+| `UI_ROOT` | `/app/web` | Directory of static UI files |
 | `DEFAULT_PROMPT_PATH` | CosyVoice `zero_shot_prompt.wav` | Bundled default speaker |
 
 ### Speakers
@@ -258,7 +304,8 @@ On startup (`entrypoint.sh` → `python -m app.bootstrap ensure-model`):
 1. Check `/models/<MODEL_LOCAL_NAME>` for known weight files.
 2. If present → **skip download**.
 3. If missing → `huggingface_hub.snapshot_download` (or ModelScope) into the volume.
-4. Load CosyVoice `AutoModel` and start Uvicorn.
+4. Start the static web UI on `UI_PORT` (unless `UI_ENABLED=false`).
+5. Load CosyVoice `AutoModel` and start Uvicorn on `PORT`.
 
 Change models without rebuilding:
 
@@ -317,7 +364,7 @@ podman volume inspect cosyvoice-tts-models
 
 # Build / run
 podman build --platform=linux/arm64 -t cosyvoice-tts:latest .
-podman run -d --name cosyvoice-tts --platform=linux/arm64 -p 8000:8000 \
+podman run -d --name cosyvoice-tts --platform=linux/arm64 -p 27755:27755 -p 27756:27756 \
   -v cosyvoice-tts-models:/models \
   -v cosyvoice-tts-output:/output \
   -v cosyvoice-tts-input:/input \
@@ -350,6 +397,14 @@ source .venv/bin/activate
 pip install numpy pytest fastapi pydantic pydantic-settings
 pytest tests/test_chunking.py tests/test_audio_service.py -q
 ```
+
+Serve the web UI locally (points at `http://localhost:27755` by default):
+
+```bash
+python -m app.ui_server --host 127.0.0.1 --port 27756 --root web
+```
+
+Or via Makefile: `make ui`.
 
 Full inference requires the container (or a native CosyVoice install with `COSYVOICE_REPO` set).
 
@@ -387,6 +442,9 @@ No API or client changes required.
 | OOM during load | Raise Podman machine memory; compose sets `mem_limit: 8g` |
 | HF rate limits | Set `HF_TOKEN` or `DOWNLOAD_SOURCE=modelscope` |
 | mp3 fails | Ensure `ffmpeg` is in the image (installed by Dockerfile) |
+| UI page loads but health is unreachable | Start/wait for API on `:27755`; confirm `-p 27755:27755` and `-p 27756:27756` |
+| UI not listening | Check `UI_ENABLED=true`, `UI_ROOT` exists (`/app/web` in image), port map `27756` |
+| Browser CORS errors | API enables open CORS by default; verify you are calling the API host/port shown in the UI |
 
 ---
 

@@ -1,15 +1,16 @@
 # syntax=docker/dockerfile:1.6
-# CosyVoice 3 TTS API — Podman-compatible multi-arch image (linux/arm64 for Apple Silicon)
+# CosyVoice 3 TTS API + web UI — Podman-compatible (linux/arm64 for Apple Silicon)
 #
 # Build (Apple Silicon / Podman):
 #   podman build --platform=linux/arm64 -t cosyvoice-tts:latest .
 #
+# Ports: 27755 (API) · 27756 (static UI under /app/web)
 # Models are NOT baked in — they download into /models on first run.
 
 FROM python:3.10-slim-bookworm
 
 LABEL org.opencontainers.image.title="cosyvoice-tts" \
-      org.opencontainers.image.description="Production CosyVoice 3 TTS API (Podman / Apple Silicon)" \
+      org.opencontainers.image.description="Production CosyVoice 3 TTS API + web UI (Podman / Apple Silicon)" \
       org.opencontainers.image.source="https://github.com/FunAudioLLM/CosyVoice" \
       org.opencontainers.image.licenses="Apache-2.0"
 
@@ -20,7 +21,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     # Runtime defaults
     HOST=0.0.0.0 \
-    PORT=8000 \
+    PORT=27755 \
+    UI_PORT=27756 \
+    UI_ROOT=/app/web \
+    UI_ENABLED=true \
     LOG_LEVEL=INFO \
     TTS_ENGINE=cosyvoice \
     DEVICE=cpu \
@@ -102,8 +106,9 @@ RUN pip install -r /app/requirements-cosyvoice-cpu.txt \
     && pip install -r /app/requirements.txt \
     && pip install huggingface_hub modelscope
 
-# Application source
+# Application source + static web UI
 COPY app /app/app
+COPY web /app/web
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh \
     && mkdir -p /models /output /input /input/speakers /cache
@@ -114,7 +119,7 @@ ENV PYTHONPATH=/opt/CosyVoice:/opt/CosyVoice/third_party/Matcha-TTS:/app
 # Persist model/audio volumes (declared for documentation; compose mounts them)
 VOLUME ["/models", "/output", "/input", "/cache"]
 
-EXPOSE 8000
+EXPOSE 27755 27756
 
 # Healthcheck hits the FastAPI /health endpoint
 # start-period is generous: first boot may download multi-GB weights

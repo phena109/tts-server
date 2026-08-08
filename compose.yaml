@@ -3,6 +3,10 @@
 #   podman compose up -d
 #   podman compose down
 #
+# Ports:
+#   27755  FastAPI (TTS API + /health)
+#   27756  Static web UI (web/)
+#
 # Apple Silicon: forces linux/arm64 (Podman machine VM).
 
 name: cosyvoice-tts
@@ -16,10 +20,13 @@ services:
     container_name: cosyvoice-tts
     platform: linux/arm64
     ports:
-      - "8000:8000"
+      - "27755:27755"
+      - "27756:27756"
     environment:
       HOST: "0.0.0.0"
-      PORT: "8000"
+      PORT: "27755"
+      UI_PORT: "27756"
+      UI_ENABLED: "true"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       TTS_ENGINE: "${TTS_ENGINE:-cosyvoice}"
       DEVICE: "${DEVICE:-cpu}"
@@ -50,7 +57,7 @@ services:
     mem_limit: 8g
     shm_size: "1g"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:27755/health"]
       interval: 30s
       timeout: 10s
       retries: 5

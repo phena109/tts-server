@@ -1,10 +1,15 @@
 # Convenience targets for Podman on Apple Silicon
+#
+#   make build / make run   — container (API :27755, UI :27756)
+#   make ui                 — local static UI only (no model)
+#   make smoke              — curl smoke tests against API
 
 IMAGE ?= cosyvoice-tts:latest
 PLATFORM ?= linux/arm64
 NAME ?= cosyvoice-tts
+UI_PORT ?= 27756
 
-.PHONY: build run stop logs rm volumes up down smoke test
+.PHONY: build run stop logs rm volumes up down smoke test ui
 
 build:
 	podman build --platform=$(PLATFORM) -t $(IMAGE) .
@@ -19,7 +24,8 @@ run: volumes
 	podman run -d \
 		--name $(NAME) \
 		--platform=$(PLATFORM) \
-		-p 8000:8000 \
+		-p 27755:27755 \
+		-p 27756:27756 \
 		-e LOG_LEVEL=INFO \
 		-e DEFAULT_LANGUAGE=yue \
 		-v cosyvoice-tts-models:/models \
@@ -45,6 +51,9 @@ down:
 
 smoke:
 	bash scripts/smoke_curl.sh
+
+ui:
+	python3 -m app.ui_server --host 127.0.0.1 --port $(UI_PORT) --root web
 
 test:
 	python3 -m venv .venv 2>/dev/null || true

@@ -23,7 +23,9 @@ class Settings(BaseSettings):
 
     # --- Server ---
     host: str = Field(default="0.0.0.0", alias="HOST")
-    port: int = Field(default=8000, alias="PORT")
+    port: int = Field(default=27755, alias="PORT")
+    ui_port: int = Field(default=27756, alias="UI_PORT")
+    ui_enabled: bool = Field(default=True, alias="UI_ENABLED")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     workers: int = Field(default=1, alias="WORKERS")
 
