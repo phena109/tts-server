@@ -23,6 +23,17 @@
       <span id="healthStatus" class="status" aria-live="polite">—</span>
     </div>
     <pre id="healthDetail" class="meta hidden"></pre>
+    <div id="modelBanner" class="model-banner" hidden>
+      <div class="model-banner-head">
+        <span id="modelPhase" class="status">—</span>
+        <button type="button" id="btnEnsure" class="hidden">Retry download</button>
+      </div>
+      <p id="modelMessage" class="model-msg">—</p>
+      <div class="progress-track" aria-hidden="true">
+        <div id="modelProgressBar" class="progress-bar" style="width: 0%"></div>
+      </div>
+      <p id="modelProgressText" class="model-msg muted"></p>
+    </div>
   </section>
 
   <nav class="tabs" role="tablist">

@@ -9,7 +9,17 @@
   const player = $("player");
   const downloadLink = $("downloadLink");
 
+  const modelBanner = $("modelBanner");
+  const modelPhase = $("modelPhase");
+  const modelMessage = $("modelMessage");
+  const modelProgressBar = $("modelProgressBar");
+  const modelProgressText = $("modelProgressText");
+  const btnEnsure = $("btnEnsure");
+  const synthButtons = [$("btnQuick"), $("btnFile"), $("btnLong")];
+
   let objectUrl = null;
+  let modelReady = false;
+  let pollTimer = null;
 
   function apiBase() {
     return (apiBaseInput.value || "").replace(/\/+$/, "");
@@ -20,6 +30,12 @@
     button.disabled = busy;
     button.dataset.label ||= button.textContent;
     button.textContent = busy ? "Working…" : button.dataset.label;
+  }
+
+  function setSynthEnabled(enabled) {
+    for (const btn of synthButtons) {
+      if (btn) btn.disabled = !enabled;
+    }
   }
 
   function clearResult() {
@@ -107,6 +123,71 @@
     return text || `${response.status} ${response.statusText}`;
   }
 
+  function renderModelStatus(body) {
+    if (!body) return;
+    modelBanner.hidden = false;
+    const phase = body.phase || "unknown";
+    const ready = !!body.ready;
+    modelReady = ready;
+    modelPhase.textContent = ready
+      ? `ready · ${body.model || "?"}`
+      : `${phase}${body.progress_pct != null ? ` · ${body.progress_pct}%` : ""}`;
+    modelPhase.className =
+      "status " + (ready ? "ok" : phase === "error" ? "err" : "warn");
+    modelMessage.textContent = body.message || body.error || "";
+    const track = modelProgressBar.parentElement;
+    if (body.progress_pct != null && !ready) {
+      track.classList.remove("indeterminate");
+      modelProgressBar.style.width = `${Math.max(0, Math.min(100, body.progress_pct))}%`;
+      modelProgressText.textContent =
+        body.bytes_downloaded != null
+          ? `${body.bytes_downloaded} bytes` +
+            (body.bytes_total != null ? ` / ${body.bytes_total}` : "")
+          : "";
+    } else if (!ready && phase !== "error") {
+      track.classList.add("indeterminate");
+      modelProgressBar.style.width = "35%";
+      modelProgressText.textContent =
+        body.bytes_downloaded != null ? `${body.bytes_downloaded} bytes so far` : "Working…";
+    } else {
+      track.classList.remove("indeterminate");
+      modelProgressBar.style.width = ready ? "100%" : "0%";
+      modelProgressText.textContent = ready ? "" : body.error || "";
+    }
+    btnEnsure.classList.toggle("hidden", !(phase === "error" || (!ready && phase === "idle")));
+    setSynthEnabled(ready);
+  }
+
+  async function fetchModelStatus() {
+    try {
+      const res = await fetch(`${apiBase()}/model/status`);
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const body = await res.json();
+      renderModelStatus(body);
+      return body;
+    } catch (err) {
+      modelBanner.hidden = false;
+      modelPhase.textContent = "api unreachable";
+      modelPhase.className = "status err";
+      modelMessage.textContent = err.message || String(err);
+      setSynthEnabled(false);
+      return null;
+    }
+  }
+
+  function schedulePoll() {
+    if (pollTimer) clearInterval(pollTimer);
+    const tick = async () => {
+      const body = await fetchModelStatus();
+      if (body && body.ready) {
+        clearInterval(pollTimer);
+        pollTimer = setInterval(fetchModelStatus, 10000);
+      }
+    };
+    tick();
+    pollTimer = setInterval(tick, 1500);
+  }
+
   async function checkHealth() {
     healthStatus.textContent = "checking…";
     healthStatus.className = "status";
@@ -173,6 +254,23 @@
   });
 
   $("btnHealth").addEventListener("click", checkHealth);
+
+  btnEnsure.addEventListener("click", async () => {
+    setBusy(btnEnsure, true);
+    try {
+      const res = await fetch(`${apiBase()}/model/ensure`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        showError(body.error || body.message || body.detail || "Ensure conflict");
+      }
+      renderModelStatus(body.phase ? body : await fetchModelStatus());
+      schedulePoll();
+    } catch (err) {
+      showError(`Ensure failed: ${err.message}`);
+    } finally {
+      setBusy(btnEnsure, false);
+    }
+  });
 
   $("btnQuick").addEventListener("click", () => {
     const text = $("quickText").value.trim();
@@ -258,5 +356,8 @@
     localStorage.setItem("ttsApiBase", apiBaseInput.value.trim());
   });
 
+  // Disable synth until first successful status shows ready
+  setSynthEnabled(false);
   checkHealth();
+  schedulePoll();
 })();
