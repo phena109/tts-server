@@ -105,13 +105,14 @@ podman run -d \
   cosyvoice-tts:latest
 ```
 
-First boot downloads the model into `/models` (several GB). Subsequent starts skip the download.
+On first boot the API binds **immediately**; the model downloads in-process in the background (several GB into `/models`). Poll `GET /model/status` or watch the web UI banner while it runs. Subsequent starts skip the download and load the engine at startup.
 
 | Service | URL |
 |---------|-----|
 | API | http://localhost:27755 |
 | Web UI | http://localhost:27756 |
 | Health | http://localhost:27755/health |
+| Model status | http://localhost:27755/model/status |
 
 ### 4. Logs / stop
 
@@ -151,6 +152,8 @@ Barebones static page (no build step) covering the same use cases as the API:
 | From file | `POST /tts-file` |
 | Long form | `POST /tts-long` |
 | Connection / health | `GET /health` |
+| Model status banner | `GET /model/status` |
+| Retry download | `POST /model/ensure` |
 
 **How it runs**
 
@@ -178,14 +181,56 @@ Base URL: `http://localhost:27755`
 curl -s http://localhost:27755/health
 ```
 
+When the engine is ready:
+
 ```json
 {
   "status": "ok",
   "engine": "cosyvoice",
   "model": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
-  "ready": true
+  "ready": true,
+  "model_phase": "ready",
+  "model_ready": true
 }
 ```
+
+While the model is still downloading or loading, `status` is `"starting"`, `ready` is `false`, and `model_phase` reflects the current phase (for example `"downloading"`). TTS routes return **503** until ready — they do not block waiting for the download.
+
+### `GET /model/status`
+
+Pollable snapshot of download / readiness state (always **200**). Safe to call every 1–2s.
+
+```bash
+curl -s http://localhost:27755/model/status | jq
+```
+
+| Field | Meaning |
+|-------|---------|
+| `phase` | `idle`, `checking`, `downloading`, `verifying`, `loading_engine`, `ready`, or `error` |
+| `ready` | `true` only when weights are complete **and** the engine is loaded |
+| `model` / `path` | Resolved model id and local directory |
+| `message` | Human-readable status line |
+| `bytes_downloaded` / `bytes_total` | Best-effort byte progress (may be null) |
+| `progress_pct` | 0–100 when total is known |
+| `files_done` / `files_total` | Optional file-level progress |
+| `error` | Set when `phase` is `error` |
+| `started_at` / `updated_at` | ISO timestamps |
+| `download_source` | `huggingface` or `modelscope` |
+
+### `POST /model/ensure`
+
+Idempotent start / resume / retry of model download + engine load. Same worker path as the automatic boot ensure.
+
+```bash
+curl -s -X POST http://localhost:27755/model/ensure | jq
+```
+
+| Condition | HTTP status | Notes |
+|-----------|-------------|--------|
+| Already downloading / verifying / loading | **200** | `already_running: true` |
+| Already ready | **200** | `already_ready: true` |
+| Started a new background job | **202** | Body is the current status snapshot |
+| `SKIP_MODEL_DOWNLOAD` and model missing | **409** | Conflict; no download started |
 
 ### `POST /tts`
 
@@ -279,7 +324,9 @@ All settings are environment variables (see also `.env.example`).
 | `DEVICE` | `cpu` | Inference device |
 | `DOWNLOAD_SOURCE` | `huggingface` | `huggingface` or `modelscope` |
 | `HF_TOKEN` | _(empty)_ | Optional Hugging Face token |
-| `SKIP_MODEL_DOWNLOAD` | `false` | Fail if model missing instead of downloading |
+| `SKIP_MODEL_DOWNLOAD` | `false` | Do not auto-download; leave not-ready / error if missing |
+| `ENSURE_MODEL_IN_ENTRYPOINT` | `false` | If `true`, block in entrypoint until download finishes (legacy); default defers ensure to the API process |
+| `WORKERS` | `1` | Uvicorn workers. **Keep at 1** — download/progress state is in-process and not shared across workers |
 | `HOST` / `PORT` | `0.0.0.0` / `27755` | API bind address |
 | `UI_PORT` | `27756` | Web UI bind port |
 | `UI_ENABLED` | `true` | Start static UI server in entrypoint |
@@ -299,13 +346,18 @@ CosyVoice 3 instruct mapping includes: `zh`, `yue` (Cantonese), `en`, `ja`, `ko`
 
 ## Model management
 
-On startup (`entrypoint.sh` → `python -m app.bootstrap ensure-model`):
+By default the model is **not** downloaded in the entrypoint. UI and API bind first; ensure runs in the API process (FastAPI lifespan background thread) so `GET /model/status` and the UI banner work during multi-GB downloads.
 
-1. Check `/models/<MODEL_LOCAL_NAME>` for known weight files.
-2. If present → **skip download**.
-3. If missing → `huggingface_hub.snapshot_download` (or ModelScope) into the volume.
-4. Start the static web UI on `UI_PORT` (unless `UI_ENABLED=false`).
-5. Load CosyVoice `AutoModel` and start Uvicorn on `PORT`.
+Boot sequence (`entrypoint.sh` + app lifespan):
+
+1. Start the static web UI on `UI_PORT` (unless `UI_ENABLED=false`).
+2. Start Uvicorn on `PORT` immediately (no blocking ensure unless `ENSURE_MODEL_IN_ENTRYPOINT=true`).
+3. In-process bootstrap checks `/models/<MODEL_LOCAL_NAME>` for known weight files.
+4. If present → load CosyVoice `AutoModel` → `phase=ready`.
+5. If missing and `SKIP_MODEL_DOWNLOAD` is false → background download (`huggingface_hub.snapshot_download` or ModelScope) → verify → load engine.
+6. Clients poll `GET /model/status` or use `POST /model/ensure` to resume / retry after an error.
+
+Manual / ops CLI (same ensure logic): `python -m app.bootstrap ensure-model`.
 
 Change models without rebuilding:
 
@@ -436,8 +488,10 @@ No API or client changes required.
 
 | Symptom | Fix |
 |---------|-----|
-| First start very slow | Model download + load; watch `podman logs -f` |
+| First start download in progress | API is up; poll `GET /model/status` or the UI banner; TTS returns 503 until `ready` |
+| Download failed / stuck in error | `POST /model/ensure` (or UI **Retry download**); check `podman logs -f` |
 | `Model missing` + skip download | Unset `SKIP_MODEL_DOWNLOAD` or pre-populate `/models` |
+| Status always idle / no progress with multi-worker | Keep `WORKERS=1` (in-process download state is not shared) |
 | `default prompt audio missing` | Image must include CosyVoice `asset/zero_shot_prompt.wav`; rebuild |
 | OOM during load | Raise Podman machine memory; compose sets `mem_limit: 8g` |
 | HF rate limits | Set `HF_TOKEN` or `DOWNLOAD_SOURCE=modelscope` |
