@@ -14,7 +14,13 @@ router = APIRouter(tags=["tts"])
 
 
 def _service(request: Request) -> TTSService:
-    return request.app.state.tts_service  # type: ignore[no-any-return]
+    svc = getattr(request.app.state, "tts_service", None)
+    if svc is None:
+        raise HTTPException(
+            status_code=503,
+            detail="TTS engine not ready; see GET /model/status",
+        )
+    return svc  # type: ignore[no-any-return]
 
 
 def _audio_response(result) -> Response:

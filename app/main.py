@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api.routes_health import router as health_router
+from app.api.routes_model import router as model_router
 from app.api.routes_tts import router as tts_router
 from app.config.settings import Settings, get_settings
 from app.engines.registry import create_engine
@@ -102,6 +103,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.include_router(health_router)
+    app.include_router(model_router)
     app.include_router(tts_router)
 
     @app.exception_handler(RequestValidationError)
