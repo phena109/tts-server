@@ -19,6 +19,9 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
         populate_by_name=True,
+        # model_name / model_dir / model_local_name are intentional field names
+        # (env MODEL_*), not Pydantic model_* reserved attributes.
+        protected_namespaces=(),
     )
 
     # --- Server ---

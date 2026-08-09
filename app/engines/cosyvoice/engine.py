@@ -113,19 +113,27 @@ class CosyVoiceEngine(TTSEngine):
             # Import only after path setup
             from cosyvoice.cli.cosyvoice import AutoModel  # type: ignore
 
+            # CosyVoice3 accepts load_trt / fp16 / load_vllm — not load_jit.
+            # CosyVoice1 may accept load_jit. Only pass flags the tree supports.
             load_kwargs: dict[str, Any] = {"model_dir": str(model_path)}
-            # AutoModel accepts optional load_jit / load_trt / fp16 on some versions
-            for key, value in (
-                ("load_jit", settings.load_jit),
-                ("load_trt", settings.load_trt),
-                ("fp16", settings.fp16),
-            ):
-                load_kwargs[key] = value
+            is_v3 = (model_path / "cosyvoice3.yaml").is_file()
+            if is_v3:
+                load_kwargs["load_trt"] = settings.load_trt
+                load_kwargs["fp16"] = settings.fp16
+            else:
+                # CosyVoice / CosyVoice2 historically accept load_jit / load_trt / fp16
+                load_kwargs["load_jit"] = settings.load_jit
+                load_kwargs["load_trt"] = settings.load_trt
+                load_kwargs["fp16"] = settings.fp16
 
             try:
                 self._model = AutoModel(**load_kwargs)
-            except TypeError:
-                # Older/newer signatures may not accept jit/trt/fp16
+            except TypeError as exc:
+                # Signature drift across CosyVoice versions — fall back to model_dir only.
+                logger.warning(
+                    "AutoModel rejected optional load flags; retrying with model_dir only",
+                    extra={"error": str(exc)},
+                )
                 self._model = AutoModel(model_dir=str(model_path))
 
             self._ready = True
