@@ -51,6 +51,29 @@ class HealthResponse(BaseModel):
     engine: str | None = None
     model: str | None = None
     ready: bool = True
+    model_phase: str | None = None
+    model_ready: bool | None = None
+
+
+class ModelStatusResponse(BaseModel):
+    """Model download / readiness status for API clients."""
+
+    phase: str
+    ready: bool = False
+    model: str | None = None
+    path: str | None = None
+    message: str = ""
+    bytes_downloaded: int | None = None
+    bytes_total: int | None = None
+    progress_pct: float | None = None
+    files_done: int | None = None
+    files_total: int | None = None
+    error: str | None = None
+    started_at: str | None = None
+    updated_at: str | None = None
+    download_source: str | None = None
+    already_running: bool | None = None
+    already_ready: bool | None = None
 
 
 class TTSResultMeta(BaseModel):
