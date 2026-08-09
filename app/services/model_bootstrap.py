@@ -82,6 +82,8 @@ class ModelBootstrap:
                 return {"conflict": True, "started": False, "error": msg}
 
             self.manager.on_progress = self._on_progress
+            # Clear prior error (or idle) so Retry 202 responses show checking, not error.
+            self.state.set_phase(ModelPhase.CHECKING, message="Checking model files")
 
             self._thread = threading.Thread(
                 target=self._run,

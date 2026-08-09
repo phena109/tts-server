@@ -201,9 +201,10 @@
         return;
       }
       const ready = body.ready !== false && body.status === "ok";
+      const phase = body.model_phase || body.status || res.status;
       healthStatus.textContent = ready
         ? `ok · ${body.engine || "?"} · ${body.model || "?"}`
-        : `starting · ${body.status || res.status}`;
+        : `starting · ${phase}`;
       healthStatus.className = ready ? "status ok" : "status warn";
       healthDetail.textContent = JSON.stringify(body, null, 2);
       healthDetail.classList.remove("hidden");
