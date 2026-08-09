@@ -10,8 +10,9 @@ detected and resumed rather than treated as ready.
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from app.config.settings import Settings
 from app.utils.logging import get_logger
@@ -53,8 +54,21 @@ _BLANK_EN_WEIGHTS: tuple[str, ...] = (
 class ModelManager:
     """Ensure model weights exist under ``settings.model_path``."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        on_progress: Callable[..., None] | None = None,
+    ) -> None:
         self.settings = settings
+        self.on_progress = on_progress
+
+    def _emit(self, **kwargs: object) -> None:
+        if self.on_progress is None:
+            return
+        try:
+            self.on_progress(**kwargs)
+        except Exception:
+            logger.exception("Progress callback failed")
 
     @property
     def model_path(self) -> Path:
@@ -89,6 +103,8 @@ class ModelManager:
         self.settings.ensure_directories()
         path = self.model_path
 
+        self._emit(phase="checking", message="Checking model files")
+
         if self.is_model_present():
             logger.info(
                 "Model already present, skipping download",
@@ -114,10 +130,14 @@ class ModelManager:
         )
         path.mkdir(parents=True, exist_ok=True)
 
+        self._emit(phase="downloading", message="Downloading model weights")
+
         if self.settings.download_source == "modelscope":
             self._download_modelscope(path)
         else:
             self._download_huggingface(path)
+
+        self._emit(phase="verifying", message="Verifying model completeness")
 
         if not self.is_model_present():
             missing = self._describe_missing(path)
@@ -145,21 +165,76 @@ class ModelManager:
         from huggingface_hub import snapshot_download
 
         token = self.settings.hf_token or os.environ.get("HF_TOKEN")
-        # Modern huggingface_hub always resumes partial downloads when possible.
-        snapshot_download(
-            repo_id=self.settings.resolved_model_name,
-            local_dir=str(local_dir),
-            token=token,
-        )
+
+        def _do_download() -> None:
+            # Modern huggingface_hub always resumes partial downloads when possible.
+            snapshot_download(
+                repo_id=self.settings.resolved_model_name,
+                local_dir=str(local_dir),
+                token=token,
+            )
+
+        self._download_with_byte_scanner(local_dir, _do_download)
 
     def _download_modelscope(self, local_dir: Path) -> None:
         # ModelScope id often mirrors FunAudioLLM/Fun-CosyVoice3-0.5B-2512
         from modelscope import snapshot_download as ms_snapshot_download
 
-        ms_snapshot_download(
-            self.settings.resolved_model_name,
-            local_dir=str(local_dir),
-        )
+        def _do_download() -> None:
+            ms_snapshot_download(
+                self.settings.resolved_model_name,
+                local_dir=str(local_dir),
+            )
+
+        self._download_with_byte_scanner(local_dir, _do_download)
+
+    def _download_with_byte_scanner(
+        self, local_dir: Path, download_fn: Callable[[], None]
+    ) -> None:
+        stop = threading.Event()
+
+        def loop() -> None:
+            while not stop.wait(2.0):
+                nbytes = self._scan_downloaded_bytes(local_dir)
+                self._emit(
+                    phase="downloading",
+                    message=f"Downloading model weights ({nbytes} bytes so far)",
+                    bytes_downloaded=nbytes,
+                )
+
+        t = threading.Thread(target=loop, name="model-dl-progress", daemon=True)
+        t.start()
+        try:
+            download_fn()
+        finally:
+            stop.set()
+            t.join(timeout=5)
+            nbytes = self._scan_downloaded_bytes(local_dir)
+            self._emit(
+                phase="downloading",
+                message=f"Download finished ({nbytes} bytes on disk)",
+                bytes_downloaded=nbytes,
+            )
+
+    @staticmethod
+    def _scan_downloaded_bytes(root: Path) -> int:
+        """Sum sizes of files under root (include *.incomplete; skip .lock)."""
+        total = 0
+        if not root.is_dir():
+            return 0
+        try:
+            for path in root.rglob("*"):
+                if not path.is_file():
+                    continue
+                if path.name.endswith(".lock"):
+                    continue
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            return total
+        return total
 
     # ------------------------------------------------------------------
     # Completeness helpers

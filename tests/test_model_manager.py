@@ -121,3 +121,32 @@ def test_ensure_model_raises_when_skip_and_missing(tmp_path: Path) -> None:
     mgr = ModelManager(_settings(tmp_path))
     with pytest.raises(FileNotFoundError):
         mgr.ensure_model()
+
+
+def test_scan_downloaded_bytes_sums_files(tmp_path: Path) -> None:
+    root = tmp_path / "m"
+    _write(root / "a.pt", 100)
+    _write(root / "b.incomplete", 50)
+    assert ModelManager._scan_downloaded_bytes(root) == 150
+
+
+def test_emit_calls_on_progress(tmp_path: Path) -> None:
+    events: list[dict] = []
+
+    def on_progress(**kwargs: object) -> None:
+        events.append(dict(kwargs))
+
+    mgr = ModelManager(_settings(tmp_path), on_progress=on_progress)
+    mgr._emit(phase="checking", message="Checking model files")
+    assert len(events) == 1
+    assert events[0]["phase"] == "checking"
+    assert events[0]["message"] == "Checking model files"
+
+
+def test_emit_swallows_callback_errors(tmp_path: Path) -> None:
+    def bad_callback(**kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    mgr = ModelManager(_settings(tmp_path), on_progress=bad_callback)
+    # Must not raise
+    mgr._emit(phase="checking", message="x")
