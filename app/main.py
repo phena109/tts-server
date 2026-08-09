@@ -18,7 +18,7 @@ from app.config.settings import Settings, get_settings
 from app.engines.registry import create_engine
 from app.services.audio_service import AudioService
 from app.services.model_bootstrap import ModelBootstrap
-from app.services.model_download_state import ModelDownloadState, ModelPhase
+from app.services.model_download_state import ModelDownloadState
 from app.services.model_manager import ModelManager
 from app.services.tts_service import TTSService
 from app.utils.logging import get_logger, setup_logging
@@ -81,14 +81,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.model_bootstrap = bootstrap
 
+    # Always load (and download if needed) in a background thread so uvicorn
+    # can bind and serve /health + /model/status immediately. Blocking load
+    # here used to leave the API dead during multi-GB engine init, and an OOM
+    # during that window looked like a permanent "api unreachable" loop.
     if manager.is_model_present():
-        try:
-            state.set_phase(ModelPhase.LOADING_ENGINE, message="Loading TTS engine")
-            load_engine()
-            state.set_phase(ModelPhase.READY, message="Model ready")
-        except Exception as exc:
-            logger.exception("Engine load failed on startup")
-            state.set_error(str(exc))
+        logger.info("Model present on disk; loading engine in background")
+        bootstrap.ensure_async()
     elif not settings.skip_model_download:
         logger.info("Model missing or incomplete; starting background download")
         bootstrap.ensure_async()

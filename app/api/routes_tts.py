@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -50,7 +51,9 @@ async def tts_json(body: TTSRequest, request: Request) -> Response:
     """Synthesize speech from a JSON body and return audio bytes."""
     svc = _service(request)
     try:
-        result = svc.synthesize(body)
+        # CPU CosyVoice can run for minutes; never block the event loop or
+        # /health and /model/status go dark mid-request.
+        result = await asyncio.to_thread(svc.synthesize, body)
     except TTSServiceError as exc:
         _raise_service_error(exc)
     return _audio_response(result)
@@ -80,7 +83,8 @@ async def tts_file(
 
     svc = _service(request)
     try:
-        result = svc.synthesize_file_text(
+        result = await asyncio.to_thread(
+            svc.synthesize_file_text,
             text,
             language=language,
             speaker=speaker,
@@ -156,7 +160,8 @@ async def tts_long(request: Request) -> Response:
 
     svc = _service(request)
     try:
-        result = svc.synthesize_long(
+        result = await asyncio.to_thread(
+            svc.synthesize_long,
             content,
             language=language,
             speaker=speaker,

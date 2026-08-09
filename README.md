@@ -493,10 +493,11 @@ No API or client changes required.
 | `Model missing` + skip download | Unset `SKIP_MODEL_DOWNLOAD` or pre-populate `/models` |
 | Status always idle / no progress with multi-worker | Keep `WORKERS=1` (in-process download state is not shared) |
 | `default prompt audio missing` | Image must include CosyVoice `asset/zero_shot_prompt.wav`; rebuild |
-| OOM during load | Raise Podman machine memory; compose sets `mem_limit: 8g` |
+| OOM during load or first TTS | CosyVoice CPU needs ~**8 GB** resident. Raise **both** Podman machine RAM and compose `mem_limit`. On a 16 GB Mac: `podman machine stop && podman machine set --memory 12288 && podman machine start` (leave headroom for macOS; avoid 14 GB+ VMs that thrash the host). Compose default is `mem_limit: 11g` |
+| Download finished then UI shows `api unreachable` / `NetworkError` | After download the engine loads (~1–2 min). UI should show `loading_engine`, not unreachable. If the banner says `api unreachable` and the container restarts every few minutes, check OOM: `podman inspect cosyvoice-tts --format '{{.State.OOMKilled}} {{.RestartCount}}'`. Raise VM memory, then `podman compose up -d --build --force-recreate` |
 | HF rate limits | Set `HF_TOKEN` or `DOWNLOAD_SOURCE=modelscope` |
 | mp3 fails | Ensure `ffmpeg` is in the image (installed by Dockerfile) |
-| UI page loads but health is unreachable | Start/wait for API on `:27755`; confirm `-p 27755:27755` and `-p 27756:27756` |
+| UI page loads but health is unreachable | API may still be starting/`loading_engine` — poll `GET /model/status`. Confirm ports `-p 27755:27755` and `-p 27756:27756`. If the container restarts every few seconds, see OOM row |
 | UI not listening | Check `UI_ENABLED=true`, `UI_ROOT` exists (`/app/web` in image), port map `27756` |
 | Browser CORS errors | API enables open CORS by default; verify you are calling the API host/port shown in the UI |
 

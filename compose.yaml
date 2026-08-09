@@ -45,16 +45,20 @@ services:
       DOWNLOAD_SOURCE: "${DOWNLOAD_SOURCE:-huggingface}"
       HF_TOKEN: "${HF_TOKEN:-}"
       SKIP_MODEL_DOWNLOAD: "${SKIP_MODEL_DOWNLOAD:-false}"
-      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-4}"
-      MKL_NUM_THREADS: "${MKL_NUM_THREADS:-4}"
+      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-2}"
+      MKL_NUM_THREADS: "${MKL_NUM_THREADS:-2}"
+      # Limit glibc arenas — reduces RSS growth under multi-thread torch on CPU
+      MALLOC_ARENA_MAX: "${MALLOC_ARENA_MAX:-2}"
     volumes:
       - tts-models:/models
       - tts-output:/output
       - tts-input:/input
       - tts-cache:/cache
     restart: unless-stopped
-    # CPU inference can be memory-heavy during first load
-    mem_limit: 8g
+    # CosyVoice CPU: ~8GB resident after load; first inference can spike higher.
+    # On a 16GB Mac leave headroom for macOS (e.g. podman machine set --memory 12288).
+    # If TTS dies mid-request, check OOMKilled and consider more RAM or VM swap.
+    mem_limit: 11g
     shm_size: "1g"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:27755/health"]
