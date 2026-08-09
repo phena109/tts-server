@@ -494,6 +494,8 @@ No API or client changes required.
 | Status always idle / no progress with multi-worker | Keep `WORKERS=1` (in-process download state is not shared) |
 | `default prompt audio missing` | Image must include CosyVoice `asset/zero_shot_prompt.wav`; rebuild |
 | OOM during load or first TTS | CosyVoice CPU needs ~**8 GB** resident. Raise **both** Podman machine RAM and compose `mem_limit`. On a 16 GB Mac: `podman machine stop && podman machine set --memory 12288 && podman machine start` (leave headroom for macOS; avoid 14 GB+ VMs that thrash the host). Compose default is `mem_limit: 11g` |
+| Quick TTS dies / empty reply / `Illegal instruction` | Apple Silicon Podman hits torch SIGILL (bias-less Linear, multi-dim matmul, mel/fbank). The image applies workarounds automatically; rebuild with `podman compose up -d --build --force-recreate`. Default prompt features cache under `/cache/prompt_features/` |
+| `no frontend is available` / wetext ModelScope auth errors | App clones wetext FSTs via ModelScope **git** into `/cache/wetext` and patches `snapshot_download`. Needs `modelscope.cn` once; assets persist on `tts-cache` |
 | Download finished then UI shows `api unreachable` / `NetworkError` | After download the engine loads (~1–2 min). UI should show `loading_engine`, not unreachable. If the banner says `api unreachable` and the container restarts every few minutes, check OOM: `podman inspect cosyvoice-tts --format '{{.State.OOMKilled}} {{.RestartCount}}'`. Raise VM memory, then `podman compose up -d --build --force-recreate` |
 | HF rate limits | Set `HF_TOKEN` or `DOWNLOAD_SOURCE=modelscope` |
 | mp3 fails | Ensure `ffmpeg` is in the image (installed by Dockerfile) |

@@ -45,10 +45,18 @@ services:
       DOWNLOAD_SOURCE: "${DOWNLOAD_SOURCE:-huggingface}"
       HF_TOKEN: "${HF_TOKEN:-}"
       SKIP_MODEL_DOWNLOAD: "${SKIP_MODEL_DOWNLOAD:-false}"
-      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-2}"
-      MKL_NUM_THREADS: "${MKL_NUM_THREADS:-2}"
+      MODELSCOPE_CACHE: /cache/modelscope
+      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-1}"
+      MKL_NUM_THREADS: "${MKL_NUM_THREADS:-1}"
       # Limit glibc arenas — reduces RSS growth under multi-thread torch on CPU
       MALLOC_ARENA_MAX: "${MALLOC_ARENA_MAX:-2}"
+      # Stream CosyVoice token2wav windows (lower peak RSS on 16GB hosts)
+      COSYVOICE_STREAM: "${COSYVOICE_STREAM:-true}"
+      # Avoid torch SVE / i8mm kernels that SIGILL under Apple Virtualization
+      GLIBC_TUNABLES: "${GLIBC_TUNABLES:-glibc.cpu.hwcaps=-SVE,-SVE2,-I8MM,-BF16}"
+      ATEN_CPU_CAPABILITY: "${ATEN_CPU_CAPABILITY:-default}"
+      TRANSFORMERS_ATTENTION_IMPLEMENTATION: "${TRANSFORMERS_ATTENTION_IMPLEMENTATION:-eager}"
+      PYTHONFAULTHANDLER: "1"
     volumes:
       - tts-models:/models
       - tts-output:/output

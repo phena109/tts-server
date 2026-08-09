@@ -33,7 +33,19 @@ export MODEL_NAME="${MODEL_NAME:-FunAudioLLM/Fun-CosyVoice3-0.5B-2512}"
 export HF_HOME="${HF_HOME:-${CACHE_DIR}/huggingface}"
 export TORCH_HOME="${TORCH_HOME:-${CACHE_DIR}/torch}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${CACHE_DIR}}"
+export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-${CACHE_DIR}/modelscope}"
 export PYTHONUNBUFFERED=1
+export PYTHONFAULTHANDLER="${PYTHONFAULTHANDLER:-1}"
+# Prefer lower peak RSS for CosyVoice CPU inference on small Podman VMs
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+export COSYVOICE_STREAM="${COSYVOICE_STREAM:-true}"
+# Apple Silicon Podman advertises SVE* that some torch kernels SIGILL on.
+# Mask them for glibc consumers; torch also reads HWCAP but this still helps.
+export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.cpu.hwcaps=-SVE,-SVE2,-I8MM,-BF16}"
+export ATEN_CPU_CAPABILITY="${ATEN_CPU_CAPABILITY:-default}"
+export TRANSFORMERS_ATTENTION_IMPLEMENTATION="${TRANSFORMERS_ATTENTION_IMPLEMENTATION:-eager}"
 
 mkdir -p "${MODEL_DIR}" "${OUTPUT_DIR}" "${INPUT_DIR}" "${CACHE_DIR}" \
   "${INPUT_DIR}/speakers" "${HF_HOME}" "${TORCH_HOME}"
