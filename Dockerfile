@@ -91,9 +91,10 @@ WORKDIR /app
 
 # CPU-only PyTorch for linux/arm64 and linux/amd64
 # Using the official CPU wheel index (no CUDA).
+# setuptools>=82 removed pkg_resources; openai-whisper==20231117 still imports it in setup.py.
 ARG TORCH_VERSION=2.3.1
 ARG TORCHAUDIO_VERSION=2.3.1
-RUN pip install --upgrade pip setuptools wheel \
+RUN pip install --upgrade pip "setuptools>=70,<82" wheel \
     && pip install \
         "torch==${TORCH_VERSION}" \
         "torchaudio==${TORCHAUDIO_VERSION}" \
@@ -102,9 +103,12 @@ RUN pip install --upgrade pip setuptools wheel \
 # CosyVoice + application Python dependencies
 COPY requirements-cosyvoice-cpu.txt /app/requirements-cosyvoice-cpu.txt
 COPY requirements.txt /app/requirements.txt
-RUN pip install -r /app/requirements-cosyvoice-cpu.txt \
-    && pip install -r /app/requirements.txt \
-    && pip install huggingface_hub modelscope
+# Build-isolate whisper with a setuptools that still ships pkg_resources (isolated envs
+# otherwise pull setuptools 82+ and fail with ModuleNotFoundError: pkg_resources).
+RUN printf 'setuptools>=70,<82\n' > /tmp/build-constraints.txt \
+    && PIP_BUILD_CONSTRAINT=/tmp/build-constraints.txt \
+       pip install -r /app/requirements-cosyvoice-cpu.txt \
+    && pip install -r /app/requirements.txt
 
 # Application source + static web UI
 COPY app /app/app
