@@ -17,6 +17,8 @@ from app.api.routes_tts import router as tts_router
 from app.config.settings import Settings, get_settings
 from app.engines.registry import create_engine
 from app.services.audio_service import AudioService
+from app.services.model_bootstrap import ModelBootstrap
+from app.services.model_download_state import ModelDownloadState, ModelPhase
 from app.services.model_manager import ModelManager
 from app.services.tts_service import TTSService
 from app.utils.logging import get_logger, setup_logging
@@ -47,36 +49,64 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         },
     )
 
-    manager = ModelManager(settings)
-    model_path = manager.ensure_model()
-    logger.info("Model ready", extra={"path": str(model_path), "model": settings.resolved_model_name})
-
-    engine = create_engine(settings)
-    engine.load()
-
-    audio = AudioService()
-    tts_service = TTSService(settings=settings, engine=engine, audio=audio)
-
-    app.state.engine = engine
-    app.state.tts_service = tts_service
-    app.state.model_manager = manager
-
-    logger.info(
-        "TTS server ready",
-        extra={
-            "engine": engine.name,
-            "model": engine.model_id,
-        },
+    state = ModelDownloadState(
+        model=settings.resolved_model_name,
+        path=str(settings.model_path),
+        download_source=settings.download_source,
     )
+    manager = ModelManager(settings)
+
+    app.state.model_state = state
+    app.state.model_manager = manager
+    app.state.engine = None
+    app.state.tts_service = None
+
+    def load_engine() -> None:
+        engine = create_engine(settings)
+        engine.load()
+        audio = AudioService()
+        tts_service = TTSService(settings=settings, engine=engine, audio=audio)
+        app.state.engine = engine
+        app.state.tts_service = tts_service
+        logger.info(
+            "TTS engine loaded",
+            extra={"engine": engine.name, "model": engine.model_id},
+        )
+
+    bootstrap = ModelBootstrap(
+        settings=settings,
+        manager=manager,
+        state=state,
+        load_engine=load_engine,
+    )
+    app.state.model_bootstrap = bootstrap
+
+    if manager.is_model_present():
+        try:
+            state.set_phase(ModelPhase.LOADING_ENGINE, message="Loading TTS engine")
+            load_engine()
+            state.set_phase(ModelPhase.READY, message="Model ready")
+        except Exception as exc:
+            logger.exception("Engine load failed on startup")
+            state.set_error(str(exc))
+    elif not settings.skip_model_download:
+        logger.info("Model missing or incomplete; starting background download")
+        bootstrap.ensure_async()
+    else:
+        state.set_error(
+            f"Model missing at {settings.model_path} and SKIP_MODEL_DOWNLOAD=true"
+        )
 
     try:
         yield
     finally:
         logger.info("Shutting down TTS server")
-        try:
-            engine.shutdown()
-        except Exception:
-            logger.exception("Error during engine shutdown")
+        engine = getattr(app.state, "engine", None)
+        if engine is not None:
+            try:
+                engine.shutdown()
+            except Exception:
+                logger.exception("Error during engine shutdown")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

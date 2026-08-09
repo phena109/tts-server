@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Container entrypoint: prepare volumes, ensure model, start UI + FastAPI.
+# Container entrypoint: prepare volumes, start UI + FastAPI early.
 #   API: PORT (default 27755) · UI: UI_PORT (default 27756)
 #
-# UI is started *before* model download so published port UI_PORT serves
-# pages immediately. Previously the port was mapped with nothing listening
-# during multi-GB download → browsers report "empty response".
+# Both UI and API bind before model download. Model ensure runs in-process
+# (FastAPI lifespan background thread) so GET /model/status is reachable
+# immediately during multi-GB downloads. Set ENSURE_MODEL_IN_ENTRYPOINT=true
+# to restore the legacy pre-API blocking download path.
 set -euo pipefail
 
 log() {
@@ -80,12 +81,15 @@ else
   log "UI_ENABLED=false — skipping UI server"
 fi
 
-# Download model into mounted volume if not already present (can take a long time)
-if [[ "${SKIP_MODEL_DOWNLOAD:-false}" != "true" ]]; then
-  log "Ensuring model is available (MODEL_NAME=${COSYVOICE_MODEL:-$MODEL_NAME})"
+# Optional legacy path: block in entrypoint before API (default off).
+# Prefer in-process background download so /model/status is reachable immediately.
+if [[ "${ENSURE_MODEL_IN_ENTRYPOINT:-false}" == "true" && "${SKIP_MODEL_DOWNLOAD:-false}" != "true" ]]; then
+  log "ENSURE_MODEL_IN_ENTRYPOINT=true — downloading model before API start"
   python -m app.bootstrap ensure-model
+elif [[ "${SKIP_MODEL_DOWNLOAD:-false}" == "true" ]]; then
+  log "SKIP_MODEL_DOWNLOAD=true — API will not auto-download models"
 else
-  log "SKIP_MODEL_DOWNLOAD=true — not downloading models"
+  log "Model ensure deferred to API process (GET /model/status, POST /model/ensure)"
 fi
 
 log "Starting uvicorn on ${HOST}:${PORT} (engine=${TTS_ENGINE})"
