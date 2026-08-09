@@ -98,6 +98,10 @@ class ModelManager:
         # Unknown layout: require at least one large weight file.
         return self._has_weights(root)
 
+    def describe_missing(self) -> str:
+        """Human-readable summary of missing/undersized files under model_path."""
+        return self._describe_missing(self.model_path)
+
     def ensure_model(self) -> Path:
         """Download the model if missing or incomplete; return local path."""
         self.settings.ensure_directories()
