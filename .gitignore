@@ -39,3 +39,6 @@ env/
 # Test / tmp
 tmp/
 .tmpdir/
+
+# Git worktrees (local isolation)
+.worktrees/
