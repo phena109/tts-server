@@ -51,6 +51,35 @@ def test_set_error_sets_phase() -> None:
     assert snap["ready"] is False
 
 
+def test_model_phase_is_str() -> None:
+    assert isinstance(ModelPhase.IDLE, str)
+    assert ModelPhase.DOWNLOADING == "downloading"
+    assert ModelPhase.READY.value == "ready"
+    assert ModelPhase.READY == "ready"
+
+
+def test_progress_clears_on_new_active_phase() -> None:
+    state = ModelDownloadState(model="m", path="/p", download_source="huggingface")
+    state.set_phase(ModelPhase.DOWNLOADING, message="Downloading…")
+    state.set_progress(bytes_downloaded=500, bytes_total=1000, files_done=1, files_total=2)
+    state.set_error("network failed")
+    snap = state.snapshot()
+    assert snap["phase"] == ModelPhase.ERROR
+    assert snap["bytes_downloaded"] == 500
+
+    # Retry: non-active → active should clear stale progress.
+    state.set_phase(ModelPhase.CHECKING, message="Checking…")
+    snap = state.snapshot()
+    assert snap["phase"] == ModelPhase.CHECKING
+    assert snap["bytes_downloaded"] is None
+    assert snap["bytes_total"] is None
+    assert snap["files_done"] is None
+    assert snap["files_total"] is None
+    assert snap["error"] is None
+    assert snap["progress_pct"] is None
+    assert snap["started_at"] is not None
+
+
 def test_concurrent_snapshots_do_not_raise() -> None:
     state = ModelDownloadState(model="m", path="/p", download_source="huggingface")
     errors: list[BaseException] = []

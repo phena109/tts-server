@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime, timezone
-from enum import StrEnum
+from enum import Enum
 from typing import Any
 
 
@@ -12,7 +12,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-class ModelPhase(StrEnum):
+class ModelPhase(str, Enum):
     IDLE = "idle"
     CHECKING = "checking"
     DOWNLOADING = "downloading"
@@ -75,6 +75,11 @@ class ModelDownloadState:
             if phase in _ACTIVE_PHASES and self._phase not in _ACTIVE_PHASES:
                 self._started_at = now
                 self._error = None
+                # New job: drop stale progress from a previous attempt.
+                self._bytes_downloaded = None
+                self._bytes_total = None
+                self._files_done = None
+                self._files_total = None
             if phase == ModelPhase.READY:
                 self._error = None
             self._phase = phase
@@ -122,7 +127,7 @@ class ModelDownloadState:
                 pct = round(100.0 * self._bytes_downloaded / self._bytes_total, 1)
                 pct = max(0.0, min(100.0, pct))
             return {
-                "phase": str(self._phase),
+                "phase": self._phase.value,
                 "ready": self._phase == ModelPhase.READY,
                 "model": self._model,
                 "path": self._path,
