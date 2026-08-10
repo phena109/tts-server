@@ -52,6 +52,8 @@ services:
       MALLOC_ARENA_MAX: "${MALLOC_ARENA_MAX:-2}"
       # Stream CosyVoice token2wav windows (lower peak RSS on 16GB hosts)
       COSYVOICE_STREAM: "${COSYVOICE_STREAM:-true}"
+      # Optional tighter hop size (default CosyVoice2 = 25). Lower = less peak RSS, more hops.
+      COSYVOICE_TOKEN_HOP_LEN: "${COSYVOICE_TOKEN_HOP_LEN:-}"
       # Avoid torch SVE / i8mm kernels that SIGILL under Apple Virtualization
       GLIBC_TUNABLES: "${GLIBC_TUNABLES:-glibc.cpu.hwcaps=-SVE,-SVE2,-I8MM,-BF16}"
       ATEN_CPU_CAPABILITY: "${ATEN_CPU_CAPABILITY:-default}"

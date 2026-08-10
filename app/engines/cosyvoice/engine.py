@@ -368,7 +368,17 @@ class CosyVoiceEngine(TTSEngine):
     # ------------------------------------------------------------------
 
     def _patch_sync_llm_tts(self) -> None:
-        """Replace CosyVoice model.tts so llm_job runs on the caller thread."""
+        """Replace CosyVoice model.tts so llm_job runs on the caller thread.
+
+        Upstream CosyVoice runs ``llm_job`` in a daemon Thread and optionally
+        streams ``token2wav`` in hop windows. On Apple Silicon Podman the
+        worker thread is flaky, so we keep LLM work inline.
+
+        Important: still honor ``stream=True``. The previous one-shot
+        ``token2wav(finalize=True)`` path ignored streaming and ran flow/HiFT
+        over the full token sequence at once — that spikes RSS and dies on
+        12 GB VMs for longer text even when short lines succeed.
+        """
         model = getattr(self._model, "model", None)
         if model is None or not hasattr(model, "tts") or not hasattr(model, "llm_job"):
             return
@@ -408,28 +418,106 @@ class CosyVoiceEngine(TTSEngine):
             else:
                 model.vc_job(source_speech_token, this_uuid)
 
-            this_tts_speech_token = torch.tensor(
-                model.tts_speech_token_dict[this_uuid]
-            ).unsqueeze(dim=0)
-            this_tts_speech = original_token2wav(
-                token=this_tts_speech_token,
-                prompt_token=flow_prompt_speech_token,
-                prompt_feat=prompt_speech_feat,
-                embedding=flow_embedding,
-                token_offset=0,
-                uuid=this_uuid,
-                finalize=True,
-                speed=speed,
-            )
-            yield {"tts_speech": this_tts_speech.cpu()}
-            with lock:
-                model.tts_speech_token_dict.pop(this_uuid, None)
-                model.llm_end_dict.pop(this_uuid, None)
-                model.hift_cache_dict.pop(this_uuid, None)
+            tokens = model.tts_speech_token_dict[this_uuid]
+            try:
+                if stream and speed == 1.0 and hasattr(model, "token_hop_len"):
+                    # Mirror CosyVoice2Model.tts stream branch, but tokens are
+                    # already fully generated (llm_job finished above).
+                    base_hop = int(getattr(model, "token_hop_len", 25) or 25)
+                    max_hop = int(
+                        getattr(model, "token_max_hop_len", 4 * base_hop) or (4 * base_hop)
+                    )
+                    scale = float(getattr(model, "stream_scale_factor", 2) or 2)
+                    # Optional tighter hops for low-RAM hosts (env override).
+                    try:
+                        env_hop = int(os.environ.get("COSYVOICE_TOKEN_HOP_LEN", "0") or "0")
+                    except ValueError:
+                        env_hop = 0
+                    hop = env_hop if env_hop > 0 else base_hop
+                    if env_hop > 0:
+                        max_hop = min(max_hop, max(hop, env_hop * 4))
+
+                    pre_look = int(getattr(model.flow, "pre_lookahead_len", 0) or 0)
+                    prompt_token_pad = int(
+                        np.ceil(flow_prompt_speech_token.shape[1] / hop) * hop
+                        - flow_prompt_speech_token.shape[1]
+                    )
+                    token_offset = 0
+                    saved_hop = getattr(model, "token_hop_len", hop)
+                    try:
+                        model.token_hop_len = hop
+                        while True:
+                            this_hop = (
+                                model.token_hop_len + prompt_token_pad
+                                if token_offset == 0
+                                else model.token_hop_len
+                            )
+                            if len(tokens) - token_offset >= this_hop + pre_look:
+                                this_tts_speech_token = torch.tensor(
+                                    tokens[
+                                        : token_offset + this_hop + pre_look
+                                    ]
+                                ).unsqueeze(dim=0)
+                                this_tts_speech = original_token2wav(
+                                    token=this_tts_speech_token,
+                                    prompt_token=flow_prompt_speech_token,
+                                    prompt_feat=prompt_speech_feat,
+                                    embedding=flow_embedding,
+                                    token_offset=token_offset,
+                                    uuid=this_uuid,
+                                    stream=True,
+                                    finalize=False,
+                                )
+                                token_offset += this_hop
+                                model.token_hop_len = min(
+                                    max_hop,
+                                    int(model.token_hop_len * scale),
+                                )
+                                yield {"tts_speech": this_tts_speech.cpu()}
+                                # Free hop activations between windows.
+                                del this_tts_speech, this_tts_speech_token
+                                gc.collect()
+                            else:
+                                break
+                        # Remaining tokens (finalize).
+                        this_tts_speech_token = torch.tensor(tokens).unsqueeze(dim=0)
+                        this_tts_speech = original_token2wav(
+                            token=this_tts_speech_token,
+                            prompt_token=flow_prompt_speech_token,
+                            prompt_feat=prompt_speech_feat,
+                            embedding=flow_embedding,
+                            token_offset=token_offset,
+                            uuid=this_uuid,
+                            finalize=True,
+                        )
+                        yield {"tts_speech": this_tts_speech.cpu()}
+                    finally:
+                        model.token_hop_len = saved_hop
+                else:
+                    # Non-stream / speed-change: one-shot finalize (upstream rule).
+                    this_tts_speech_token = torch.tensor(tokens).unsqueeze(dim=0)
+                    this_tts_speech = original_token2wav(
+                        token=this_tts_speech_token,
+                        prompt_token=flow_prompt_speech_token,
+                        prompt_feat=prompt_speech_feat,
+                        embedding=flow_embedding,
+                        token_offset=0,
+                        uuid=this_uuid,
+                        finalize=True,
+                        speed=speed,
+                    )
+                    yield {"tts_speech": this_tts_speech.cpu()}
+            finally:
+                with lock:
+                    model.tts_speech_token_dict.pop(this_uuid, None)
+                    model.llm_end_dict.pop(this_uuid, None)
+                    model.hift_cache_dict.pop(this_uuid, None)
 
         tts_sync._tts_sync_patched = True  # type: ignore[attr-defined]
         model.tts = tts_sync  # type: ignore[method-assign]
-        logger.info("Patched CosyVoice model.tts to run LLM inline (no worker thread)")
+        logger.info(
+            "Patched CosyVoice model.tts to run LLM inline with stream-aware token2wav"
+        )
 
     def _install_prompt_feature_cache(self) -> None:
         """Cache speech-tokenizer / campplus outputs per prompt wav path.
