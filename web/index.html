@@ -44,7 +44,7 @@
 
   <section class="card tab-panel active" id="panel-quick" role="tabpanel">
     <h2>Quick TTS</h2>
-    <p class="hint">POST /tts — short text → audio bytes</p>
+    <p class="hint">POST /tts — short text → audio. On CPU expect ~30–120s; the Result panel shows live elapsed time.</p>
     <label>
       Text
       <textarea id="quickText" rows="4" placeholder="你好，我係測試。">你好，我係測試。</textarea>
@@ -154,6 +154,16 @@
   <section class="card" id="result">
     <h2>Result</h2>
     <p id="resultMsg" class="status">No synthesis yet.</p>
+    <div id="synthProgress" class="synth-progress hidden" aria-live="polite">
+      <div class="progress-track indeterminate" aria-hidden="true">
+        <div id="synthProgressBar" class="progress-bar" style="width: 35%"></div>
+      </div>
+      <p id="synthElapsed" class="model-msg muted">—</p>
+      <p id="synthStage" class="model-msg">—</p>
+      <p class="model-msg muted synth-hint">
+        CosyVoice on CPU often takes 30–120+ seconds. Health checks may pause while the server is busy — that is normal.
+      </p>
+    </div>
     <pre id="resultMeta" class="meta hidden"></pre>
     <audio id="player" controls class="hidden"></audio>
     <div class="row">
