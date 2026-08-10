@@ -1,7 +1,9 @@
-"""CosyVoice 3 engine adapter.
+"""CosyVoice engine adapter (CosyVoice2 / CosyVoice3).
 
 Wraps FunAudioLLM CosyVoice ``AutoModel`` behind the shared :class:`TTSEngine`
 interface so the REST layer never depends on CosyVoice internals.
+
+Default product model is ASLP-lab CosyVoice2-Yue-ZoengJyutGaai (Cantonese).
 """
 
 from __future__ import annotations
@@ -11,16 +13,18 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
 from app.config.settings import Settings
 from app.engines.base import AudioResult, SynthesisRequest, TTSEngine
+from app.engines.cosyvoice.checkpoint_patch import install_checkpoint_compat
 from app.engines.cosyvoice.mel_patch import install_safe_mel_spectrogram
 from app.engines.cosyvoice.torch_patch import (
     ensure_linear_biases,
     install_safe_attention,
+    install_safe_matmul,
 )
 from app.services.prompt_features import (
     ensure_prompt_features,
@@ -31,8 +35,13 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+CosyVoiceGen = Literal["cosyvoice2", "cosyvoice3", "unknown"]
+
+# CosyVoice2-Yue (ASLP-lab) official instruct phrasing for Cantonese.
+_YUE_INSTRUCT_V2 = "用粤语说这句话"
+
 # Language / dialect → natural-language instruct for CosyVoice3 inference_instruct2
-LANGUAGE_INSTRUCT: dict[str, str] = {
+LANGUAGE_INSTRUCT_V3: dict[str, str] = {
     "zh": "请用普通话表达。",
     "zh-cn": "请用普通话表达。",
     "cn": "请用普通话表达。",
@@ -63,6 +72,21 @@ LANGUAGE_INSTRUCT: dict[str, str] = {
     "russian": "Пожалуйста, говорите по-русски.",
 }
 
+# CosyVoice2 instruct (plain natural language; no system/endofprompt tokens)
+LANGUAGE_INSTRUCT_V2: dict[str, str] = {
+    "zh": "用普通话说这句话",
+    "zh-cn": "用普通话说这句话",
+    "cn": "用普通话说这句话",
+    "yue": _YUE_INSTRUCT_V2,
+    "cantonese": _YUE_INSTRUCT_V2,
+    "zh-yue": _YUE_INSTRUCT_V2,
+    "zh-hk": _YUE_INSTRUCT_V2,
+    "en": "Please say this in English.",
+    "english": "Please say this in English.",
+}
+
+_YUE_LANG_KEYS = frozenset({"yue", "cantonese", "zh-yue", "zh-hk"})
+
 
 def _speed_instruct(speed: float) -> str | None:
     if speed >= 1.35:
@@ -92,7 +116,7 @@ def _configure_cpu_threads() -> None:
 
 
 class CosyVoiceEngine(TTSEngine):
-    """Production CosyVoice 3 backend (CPU-friendly container target)."""
+    """Production CosyVoice backend (CPU-friendly container target)."""
 
     name = "cosyvoice"
 
@@ -103,6 +127,8 @@ class CosyVoiceEngine(TTSEngine):
         self._ready = False
         self._model_id = settings.resolved_model_name
         self._prompt_extract_cache: dict[str, dict[str, Any]] = {}
+        self._generation: CosyVoiceGen = "unknown"
+        self._opencc: Any = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> CosyVoiceEngine:
@@ -114,6 +140,14 @@ class CosyVoiceEngine(TTSEngine):
 
     def is_ready(self) -> bool:
         return self._ready and self._model is not None
+
+    @staticmethod
+    def detect_generation(model_path: Path) -> CosyVoiceGen:
+        if (model_path / "cosyvoice3.yaml").is_file():
+            return "cosyvoice3"
+        if (model_path / "cosyvoice2.yaml").is_file():
+            return "cosyvoice2"
+        return "unknown"
 
     def load(self) -> None:
         with self._lock:
@@ -128,10 +162,13 @@ class CosyVoiceEngine(TTSEngine):
                     "Run model download first (entrypoint) or mount weights under MODEL_DIR."
                 )
 
+            self._generation = self.detect_generation(model_path)
             self._ensure_cosyvoice_on_path(settings.cosyvoice_repo)
             _configure_cpu_threads()
             # Must run before any Matcha/CosyVoice mel path (prompt features + TTS).
             install_safe_mel_spectrogram()
+            # 3D+/4D torch.matmul SIGILLs on Apple Silicon Podman (flow attention).
+            install_safe_matmul()
             # Must run before transformers Qwen2 is imported via AutoModel.
             install_safe_attention()
 
@@ -162,21 +199,23 @@ class CosyVoiceEngine(TTSEngine):
                     "model": self._model_id,
                     "path": str(model_path),
                     "device": settings.device,
+                    "generation": self._generation,
                 },
             )
 
             # Import only after path setup
             from cosyvoice.cli.cosyvoice import AutoModel  # type: ignore
 
+            # Patch CosyVoiceModel.load after cosyvoice is importable.
+            install_checkpoint_compat()
+
             # CosyVoice3 accepts load_trt / fp16 / load_vllm — not load_jit.
-            # CosyVoice1 may accept load_jit. Only pass flags the tree supports.
+            # CosyVoice1/2 historically accept load_jit / load_trt / fp16.
             load_kwargs: dict[str, Any] = {"model_dir": str(model_path)}
-            is_v3 = (model_path / "cosyvoice3.yaml").is_file()
-            if is_v3:
+            if self._generation == "cosyvoice3":
                 load_kwargs["load_trt"] = settings.load_trt
                 load_kwargs["fp16"] = settings.fp16
             else:
-                # CosyVoice / CosyVoice2 historically accept load_jit / load_trt / fp16
                 load_kwargs["load_jit"] = settings.load_jit
                 load_kwargs["load_trt"] = settings.load_trt
                 load_kwargs["fp16"] = settings.fp16
@@ -205,6 +244,7 @@ class CosyVoiceEngine(TTSEngine):
 
             self._install_prompt_feature_cache()
             self._hydrate_prompt_cache_from_disk()
+            self._init_opencc()
 
             self._ready = True
             sample_rate = getattr(self._model, "sample_rate", settings.sample_rate)
@@ -214,9 +254,11 @@ class CosyVoiceEngine(TTSEngine):
                 "CosyVoice model ready",
                 extra={
                     "model": self._model_id,
+                    "generation": self._generation,
                     "sample_rate": sample_rate,
                     "text_frontend": text_frontend or "none",
                     "prompt_cache_keys": len(self._prompt_extract_cache),
+                    "opencc": self._opencc is not None,
                 },
             )
 
@@ -228,16 +270,19 @@ class CosyVoiceEngine(TTSEngine):
         settings = self._settings
         prompt_wav = self._resolve_prompt_audio(request)
         prompt_text = request.prompt_text or settings.default_prompt_text
-        instruct = self._build_instruct(request.language, request.speed)
+        lang_key = (request.language or settings.default_language).lower().strip()
+        text = self._prepare_text(request.text, lang_key)
+        instruct = self._build_instruct(lang_key, request.speed)
 
         logger.info(
             "CosyVoice synthesize",
             extra={
                 "model": self._model_id,
-                "language": request.language,
+                "generation": self._generation,
+                "language": lang_key,
                 "speaker": request.speaker,
                 "speed": request.speed,
-                "text_len": len(request.text),
+                "text_len": len(text),
                 "mode": "instruct2" if instruct else "zero_shot",
             },
         )
@@ -266,19 +311,23 @@ class CosyVoiceEngine(TTSEngine):
             )
             if instruct:
                 generator = self._model.inference_instruct2(
-                    request.text,
+                    text,
                     instruct,
                     str(prompt_wav),
                     stream=use_stream,
                 )
             else:
-                full_prompt = (
-                    f"{settings.system_prompt_prefix}"
-                    f"{settings.end_of_prompt_token}"
-                    f"{prompt_text}"
-                )
+                if self._generation == "cosyvoice3":
+                    full_prompt = (
+                        f"{settings.system_prompt_prefix}"
+                        f"{settings.end_of_prompt_token}"
+                        f"{prompt_text}"
+                    )
+                else:
+                    # CosyVoice2 zero-shot expects plain prompt transcript text.
+                    full_prompt = prompt_text
                 generator = self._model.inference_zero_shot(
-                    request.text,
+                    text,
                     full_prompt,
                     str(prompt_wav),
                     stream=use_stream,
@@ -301,7 +350,8 @@ class CosyVoiceEngine(TTSEngine):
             meta={
                 "model": self._model_id,
                 "engine": self.name,
-                "language": request.language,
+                "generation": self._generation,
+                "language": lang_key,
                 "speaker": request.speaker,
             },
         )
@@ -447,7 +497,9 @@ class CosyVoiceEngine(TTSEngine):
             return
         from app.services.prompt_features import prompt_feature_cache_path
 
-        disk = prompt_feature_cache_path(settings.cache_dir, path)
+        disk = prompt_feature_cache_path(
+            settings.cache_dir, path, model_dir=settings.model_path
+        )
         data = load_prompt_features(disk)
         if data is None:
             logger.warning(
@@ -504,22 +556,66 @@ class CosyVoiceEngine(TTSEngine):
             f"Place a reference wav at {candidate} or use speaker='default'."
         )
 
+    def _init_opencc(self) -> None:
+        """Optional simplified→traditional converter for Cantonese (ASLP recommendation)."""
+        self._opencc = None
+        try:
+            from opencc import OpenCC  # type: ignore
+
+            self._opencc = OpenCC("s2t")
+            logger.info("OpenCC s2t ready for Cantonese text normalization")
+        except Exception:
+            logger.info(
+                "OpenCC unavailable; Cantonese will use input text as-is "
+                "(install opencc-python-reimplemented for s2t)"
+            )
+
+    def _prepare_text(self, text: str, lang_key: str) -> str:
+        """Normalize text for the active model (Yue: s2t when OpenCC is present)."""
+        if lang_key not in _YUE_LANG_KEYS or self._opencc is None:
+            return text
+        try:
+            converted = self._opencc.convert(text)
+            if converted and converted != text:
+                logger.debug(
+                    "Applied OpenCC s2t for Yue",
+                    extra={"before_len": len(text), "after_len": len(converted)},
+                )
+            return converted or text
+        except Exception:
+            logger.exception("OpenCC convert failed; using original text")
+            return text
+
     def _build_instruct(self, language: str, speed: float) -> str | None:
         settings = self._settings
         lang_key = (language or settings.default_language).lower().strip()
-        lang_part = LANGUAGE_INSTRUCT.get(lang_key)
         speed_part = _speed_instruct(speed)
 
-        if not lang_part and not speed_part:
-            # Still use instruct for default zh to stabilize style? Prefer zero-shot.
-            return None
+        if self._generation == "cosyvoice3":
+            lang_part = LANGUAGE_INSTRUCT_V3.get(lang_key)
+            if not lang_part and not speed_part:
+                return None
+            pieces = [settings.system_prompt_prefix]
+            if lang_part:
+                pieces.append(lang_part)
+            if speed_part:
+                pieces.append(speed_part)
+            return " ".join(pieces) + settings.end_of_prompt_token
 
-        pieces = [settings.system_prompt_prefix]
+        # CosyVoice2 (incl. Yue fine-tunes): plain instruct string.
+        # Default product language is yue — always prefer instruct2 for Yue.
+        lang_part = LANGUAGE_INSTRUCT_V2.get(lang_key)
+        if not lang_part and not speed_part:
+            # Default language for this product is yue; still instruct when unset.
+            if not lang_key or lang_key in _YUE_LANG_KEYS:
+                return _YUE_INSTRUCT_V2
+            return None
+        pieces: list[str] = []
         if lang_part:
             pieces.append(lang_part)
         if speed_part:
             pieces.append(speed_part)
-        return " ".join(pieces) + settings.end_of_prompt_token
+        return " ".join(pieces) if pieces else None
 
     @staticmethod
     def _ensure_cosyvoice_on_path(repo: Path) -> None:

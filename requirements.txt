@@ -29,6 +29,7 @@ lightning==2.2.4
 wget==3.2
 gdown==5.1.0
 wetext==0.0.4
+opencc-python-reimplemented==0.1.7
 inflect==7.3.1
 x-transformers==2.11.24
 omegaconf==2.3.0

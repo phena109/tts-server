@@ -38,13 +38,13 @@ class Settings(BaseSettings):
     # --- Model ---
     # COSYVOICE_MODEL is an alias for MODEL_NAME for convenience.
     model_name: str = Field(
-        default="FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+        default="ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai",
         alias="MODEL_NAME",
     )
     cosyvoice_model: str | None = Field(default=None, alias="COSYVOICE_MODEL")
     model_dir: Path = Field(default=Path("/models"), alias="MODEL_DIR")
     model_local_name: str = Field(
-        default="Fun-CosyVoice3-0.5B",
+        default="Cosyvoice2-Yue-ZoengJyutGaai",
         alias="MODEL_LOCAL_NAME",
     )
     cosyvoice_repo: Path = Field(
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     )
 
     # --- Synthesis defaults ---
-    default_language: str = Field(default="zh", alias="DEFAULT_LANGUAGE")
+    default_language: str = Field(default="yue", alias="DEFAULT_LANGUAGE")
     default_speaker: str = Field(default="default", alias="DEFAULT_SPEAKER")
     output_format: Literal["wav", "mp3"] = Field(
         default="wav",

@@ -1,6 +1,8 @@
-# CosyVoice 3 TTS Server (Podman / Apple Silicon)
+# CosyVoice TTS Server (Podman / Apple Silicon)
 
-Production-ready **text-to-speech API** wrapping [FunAudioLLM CosyVoice 3](https://github.com/FunAudioLLM/CosyVoice) behind a stable FastAPI surface, plus a barebones **web UI** on a second port.
+Production-ready **text-to-speech API** wrapping [FunAudioLLM CosyVoice](https://github.com/FunAudioLLM/CosyVoice) behind a stable FastAPI surface, plus a barebones **web UI** on a second port.
+
+Default weights are the Cantonese fine-tune [ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai](https://huggingface.co/ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai) (WenetSpeech-Yue / ZoengJyutGaai).
 
 | Target | Value |
 |--------|--------|
@@ -8,7 +10,7 @@ Production-ready **text-to-speech API** wrapping [FunAudioLLM CosyVoice 3](https
 | Host | macOS Sequoia · Apple Silicon (M4) |
 | Execution | **CPU** in `linux/arm64` container (Podman machine VM) |
 | Python | 3.10 |
-| Default model | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` |
+| Default model | `ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai` |
 | API port | **27755** |
 | Web UI port | **27756** |
 
@@ -33,7 +35,7 @@ Browser UI (:27756)          API clients
                    ▼
             TTSEngine protocol  (app/engines/base.py)
                    │
-                   ├── cosyvoice  (default)  → FunAudioLLM AutoModel
+                   ├── cosyvoice  (default)  → CosyVoice2/3 AutoModel
                    ├── melo       (future)
                    ├── fish       (future)
                    └── kokoro     (future)
@@ -93,8 +95,8 @@ podman run -d \
   --platform=linux/arm64 \
   -p 27755:27755 \
   -p 27756:27756 \
-  -e MODEL_NAME=FunAudioLLM/Fun-CosyVoice3-0.5B-2512 \
-  -e COSYVOICE_MODEL=FunAudioLLM/Fun-CosyVoice3-0.5B-2512 \
+  -e MODEL_NAME=ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai \
+  -e COSYVOICE_MODEL=ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai \
   -e DEFAULT_LANGUAGE=yue \
   -e LOG_LEVEL=INFO \
   -e MAX_CHARS_PER_CHUNK=200 \
@@ -187,7 +189,7 @@ When the engine is ready:
 {
   "status": "ok",
   "engine": "cosyvoice",
-  "model": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+  "model": "ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai",
   "ready": true,
   "model_phase": "ready",
   "model_ready": true
@@ -309,16 +311,16 @@ All settings are environment variables (see also `.env.example`).
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TTS_ENGINE` | `cosyvoice` | Backend registry key |
-| `MODEL_NAME` | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` | HF / ModelScope id |
+| `MODEL_NAME` | `ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai` | HF / ModelScope id |
 | `COSYVOICE_MODEL` | _(empty)_ | Overrides `MODEL_NAME` when set |
-| `MODEL_LOCAL_NAME` | `Fun-CosyVoice3-0.5B` | Subfolder under `/models` |
+| `MODEL_LOCAL_NAME` | `Cosyvoice2-Yue-ZoengJyutGaai` | Subfolder under `/models` |
 | `MODEL_DIR` | `/models` | Model volume |
 | `OUTPUT_DIR` | `/output` | Saved generations |
 | `INPUT_DIR` | `/input` | Optional speaker refs: `/input/speakers/<name>.wav` |
 | `CACHE_DIR` | `/cache` | HF / torch caches |
 | `OUTPUT_FORMAT` | `wav` | Default for `/tts` |
 | `MAX_CHARS_PER_CHUNK` | `200` | Long-form chunk budget |
-| `DEFAULT_LANGUAGE` | `zh` | Fallback language |
+| `DEFAULT_LANGUAGE` | `yue` | Fallback language (Cantonese) |
 | `DEFAULT_SPEAKER` | `default` | Bundled zero-shot prompt voice |
 | `LOG_LEVEL` | `INFO` | Structured JSON logs |
 | `DEVICE` | `cpu` | Inference device |
@@ -340,7 +342,9 @@ All settings are environment variables (see also `.env.example`).
 
 ### Languages
 
-CosyVoice 3 instruct mapping includes: `zh`, `yue` (Cantonese), `en`, `ja`, `ko`, `de`, `es`, `fr`, `it`, `ru`, plus several Chinese dialects (`sc`, `sh`, …). See `app/engines/cosyvoice/engine.py`.
+Default model is **Cantonese-first** (`yue`). The engine uses CosyVoice2-style instruct (`用粤语说这句话`) and optional OpenCC simplified→traditional pre-processing for Yue.
+
+CosyVoice3 instruct mapping (if you switch back to a v3 checkpoint) includes: `zh`, `yue`, `en`, `ja`, `ko`, `de`, `es`, `fr`, `it`, `ru`, plus Chinese dialects (`sc`, `sh`, …). See `app/engines/cosyvoice/engine.py`.
 
 ---
 
@@ -359,12 +363,22 @@ Boot sequence (`entrypoint.sh` + app lifespan):
 
 Manual / ops CLI (same ensure logic): `python -m app.bootstrap ensure-model`.
 
-Change models without rebuilding:
+Change models without rebuilding (example: CosyVoice3 multipurpose):
 
 ```bash
 podman run ... \
   -e COSYVOICE_MODEL=FunAudioLLM/Fun-CosyVoice3-0.5B-2512 \
   -e MODEL_LOCAL_NAME=Fun-CosyVoice3-0.5B \
+  ...
+```
+
+Default Cantonese model:
+
+```bash
+podman run ... \
+  -e MODEL_NAME=ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai \
+  -e MODEL_LOCAL_NAME=Cosyvoice2-Yue-ZoengJyutGaai \
+  -e DEFAULT_LANGUAGE=yue \
   ...
 ```
 
@@ -392,7 +406,7 @@ Stdout is **structured JSON** per line:
   "level": "INFO",
   "logger": "app.services.tts_service",
   "message": "TTS job completed",
-  "model": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+  "model": "ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai",
   "chunk_count": 3,
   "generation_time_ms": 4521.3,
   "format": "mp3"
@@ -493,8 +507,8 @@ No API or client changes required.
 | `Model missing` + skip download | Unset `SKIP_MODEL_DOWNLOAD` or pre-populate `/models` |
 | Status always idle / no progress with multi-worker | Keep `WORKERS=1` (in-process download state is not shared) |
 | `default prompt audio missing` | Image must include CosyVoice `asset/zero_shot_prompt.wav`; rebuild |
-| OOM during load or first TTS | CosyVoice CPU needs ~**8 GB** resident. Raise **both** Podman machine RAM and compose `mem_limit`. On a 16 GB Mac: `podman machine stop && podman machine set --memory 12288 && podman machine start` (leave headroom for macOS; avoid 14 GB+ VMs that thrash the host). Compose default is `mem_limit: 11g` |
-| Quick TTS dies / empty reply / `Illegal instruction` | Apple Silicon Podman hits torch SIGILL (bias-less Linear, multi-dim matmul, mel/fbank). The image applies workarounds automatically; rebuild with `podman compose up -d --build --force-recreate`. Default prompt features cache under `/cache/prompt_features/` |
+| OOM during load or first TTS | CosyVoice CPU needs ~**6–8 GB** resident after load; peak during TTS is usually lower than the crash-looking restarts below. Raise **both** Podman machine RAM and compose `mem_limit`. On a 16 GB Mac: `podman machine stop && podman machine set --memory 12288 && podman machine start` (leave headroom for macOS). Compose default is `mem_limit: 11g`. Confirm real OOM with `podman inspect cosyvoice-tts --format '{{.State.OOMKilled}}'` — if `false` but the process dies mid-TTS, see SIGILL row |
+| Quick TTS dies / empty reply / `Illegal instruction` / looks like “always OOM” | Usually **SIGILL**, not OOM: Apple Silicon Podman torch bugs (bias-less Linear, **3D+/4D matmul** in CosyVoice flow attention, mel/fbank). Logs show `Fatal Python error: Illegal instruction` under `transformer/attention.py` / `token2wav`. Image workarounds: `install_safe_matmul`, Qwen2 eager attention, linear biases, mel patches. Rebuild: `podman compose up -d --build --force-recreate` |
 | `no frontend is available` / wetext ModelScope auth errors | App clones wetext FSTs via ModelScope **git** into `/cache/wetext` and patches `snapshot_download`. Needs `modelscope.cn` once; assets persist on `tts-cache` |
 | Download finished then UI shows `api unreachable` / `NetworkError` | After download the engine loads (~1–2 min). UI should show `loading_engine`, not unreachable. If the banner says `api unreachable` and the container restarts every few minutes, check OOM: `podman inspect cosyvoice-tts --format '{{.State.OOMKilled}} {{.RestartCount}}'`. Raise VM memory, then `podman compose up -d --build --force-recreate` |
 | HF rate limits | Set `HF_TOKEN` or `DOWNLOAD_SOURCE=modelscope` |

@@ -10,7 +10,7 @@
 FROM python:3.10-slim-bookworm
 
 LABEL org.opencontainers.image.title="cosyvoice-tts" \
-      org.opencontainers.image.description="Production CosyVoice 3 TTS API + web UI (Podman / Apple Silicon)" \
+      org.opencontainers.image.description="Production CosyVoice TTS API + web UI (default: CosyVoice2-Yue; Podman / Apple Silicon)" \
       org.opencontainers.image.source="https://github.com/FunAudioLLM/CosyVoice" \
       org.opencontainers.image.licenses="Apache-2.0"
 
@@ -32,12 +32,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OUTPUT_DIR=/output \
     INPUT_DIR=/input \
     CACHE_DIR=/cache \
-    MODEL_NAME=FunAudioLLM/Fun-CosyVoice3-0.5B-2512 \
-    MODEL_LOCAL_NAME=Fun-CosyVoice3-0.5B \
+    MODEL_NAME=ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai \
+    MODEL_LOCAL_NAME=Cosyvoice2-Yue-ZoengJyutGaai \
     COSYVOICE_REPO=/opt/CosyVoice \
     DEFAULT_PROMPT_PATH=/opt/CosyVoice/asset/zero_shot_prompt.wav \
     MAX_CHARS_PER_CHUNK=200 \
-    DEFAULT_LANGUAGE=zh \
+    DEFAULT_LANGUAGE=yue \
     OUTPUT_FORMAT=wav \
     HF_HOME=/cache/huggingface \
     TORCH_HOME=/cache/torch \

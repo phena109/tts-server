@@ -20,7 +20,7 @@ class SynthesisRequest:
     """Normalized synthesis request passed to every engine."""
 
     text: str
-    language: str = "zh"
+    language: str = "yue"
     speaker: str = "default"
     speed: float = 1.0
     # Optional path to a reference / prompt wav for zero-shot cloning

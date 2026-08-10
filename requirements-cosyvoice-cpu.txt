@@ -28,6 +28,8 @@ transformers==4.51.3
 x-transformers==2.11.24
 uvicorn==0.30.0
 wetext==0.0.4
+# Optional but recommended for Cantonese (ASLP CosyVoice2-Yue s2t pre-process)
+opencc-python-reimplemented==0.1.7
 wget==3.2
 einops>=0.7.0
 tiktoken>=0.7.0

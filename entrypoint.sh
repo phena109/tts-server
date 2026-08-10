@@ -28,7 +28,7 @@ export INPUT_DIR="${INPUT_DIR:-/input}"
 export CACHE_DIR="${CACHE_DIR:-/cache}"
 export TTS_ENGINE="${TTS_ENGINE:-cosyvoice}"
 export DEVICE="${DEVICE:-cpu}"
-export MODEL_NAME="${MODEL_NAME:-FunAudioLLM/Fun-CosyVoice3-0.5B-2512}"
+export MODEL_NAME="${MODEL_NAME:-ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai}"
 # COSYVOICE_MODEL overrides MODEL_NAME when set (handled in Settings)
 export HF_HOME="${HF_HOME:-${CACHE_DIR}/huggingface}"
 export TORCH_HOME="${TORCH_HOME:-${CACHE_DIR}/torch}"

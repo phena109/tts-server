@@ -31,14 +31,14 @@ services:
       TTS_ENGINE: "${TTS_ENGINE:-cosyvoice}"
       DEVICE: "${DEVICE:-cpu}"
       # Model selection — change without rebuilding the image
-      MODEL_NAME: "${MODEL_NAME:-FunAudioLLM/Fun-CosyVoice3-0.5B-2512}"
+      MODEL_NAME: "${MODEL_NAME:-ASLP-lab/Cosyvoice2-Yue-ZoengJyutGaai}"
       COSYVOICE_MODEL: "${COSYVOICE_MODEL:-}"
-      MODEL_LOCAL_NAME: "${MODEL_LOCAL_NAME:-Fun-CosyVoice3-0.5B}"
+      MODEL_LOCAL_NAME: "${MODEL_LOCAL_NAME:-Cosyvoice2-Yue-ZoengJyutGaai}"
       MODEL_DIR: /models
       OUTPUT_DIR: /output
       INPUT_DIR: /input
       CACHE_DIR: /cache
-      DEFAULT_LANGUAGE: "${DEFAULT_LANGUAGE:-zh}"
+      DEFAULT_LANGUAGE: "${DEFAULT_LANGUAGE:-yue}"
       DEFAULT_SPEAKER: "${DEFAULT_SPEAKER:-default}"
       OUTPUT_FORMAT: "${OUTPUT_FORMAT:-wav}"
       MAX_CHARS_PER_CHUNK: "${MAX_CHARS_PER_CHUNK:-200}"

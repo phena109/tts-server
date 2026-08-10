@@ -116,7 +116,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="TTS Server",
         description=(
             "Production multi-engine text-to-speech API. "
-            "Default engine: CosyVoice 3. Backends are swappable via TTS_ENGINE."
+            "Default engine: CosyVoice (ASLP-lab CosyVoice2-Yue). "
+            "Backends are swappable via TTS_ENGINE."
         ),
         version=__version__,
         lifespan=lifespan,

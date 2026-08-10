@@ -117,6 +117,77 @@ def test_undersized_weight_not_present(tmp_path: Path, small_thresholds: None) -
     assert mgr.is_model_present() is False
 
 
+@pytest.fixture
+def small_cv2_thresholds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        mm,
+        "_COSYVOICE2_REQUIRED",
+        {
+            "cosyvoice2.yaml": 4,
+            "llm.pt": 10,
+            "flow.pt": 10,
+            "hift.pt": 10,
+            "campplus.onnx": 10,
+            "speech_tokenizer_v2.onnx": 10,
+        },
+    )
+    original = ModelManager._is_cosyvoice2_complete
+
+    def _complete_small(cls: type[ModelManager], root: Path) -> bool:  # noqa: ANN001
+        for rel, min_size in mm._COSYVOICE2_REQUIRED.items():
+            if not cls._file_ok(root / rel, min_size):
+                return False
+        blank = root / "CosyVoice-BlankEN"
+        if not blank.is_dir():
+            return False
+        return any(cls._file_ok(blank / name, 10) for name in mm._BLANK_EN_WEIGHTS)
+
+    monkeypatch.setattr(ModelManager, "_is_cosyvoice2_complete", classmethod(_complete_small))
+    assert original is not None
+
+
+def test_complete_cosyvoice2_is_present(tmp_path: Path, small_cv2_thresholds: None) -> None:
+    root = tmp_path / "Cosyvoice2-Yue-ZoengJyutGaai"
+    _write(root / "cosyvoice2.yaml")
+    _write(root / "llm.pt", 20)
+    _write(root / "flow.pt", 20)
+    _write(root / "hift.pt", 20)
+    _write(root / "campplus.onnx", 20)
+    _write(root / "speech_tokenizer_v2.onnx", 20)
+    _write(root / "CosyVoice-BlankEN" / "model.safetensors", 20)
+
+    mgr = ModelManager(
+        Settings(
+            MODEL_DIR=str(tmp_path),
+            MODEL_LOCAL_NAME="Cosyvoice2-Yue-ZoengJyutGaai",
+            SKIP_MODEL_DOWNLOAD=True,
+            INPUT_DIR=str(tmp_path / "input"),
+            OUTPUT_DIR=str(tmp_path / "output"),
+            CACHE_DIR=str(tmp_path / "cache"),
+        )
+    )
+    assert mgr.is_model_present() is True
+
+
+def test_partial_cosyvoice2_not_present(tmp_path: Path, small_cv2_thresholds: None) -> None:
+    root = tmp_path / "Cosyvoice2-Yue-ZoengJyutGaai"
+    _write(root / "cosyvoice2.yaml")
+    _write(root / "campplus.onnx", 20)
+    # Missing llm/flow/tokenizer/blank
+
+    mgr = ModelManager(
+        Settings(
+            MODEL_DIR=str(tmp_path),
+            MODEL_LOCAL_NAME="Cosyvoice2-Yue-ZoengJyutGaai",
+            SKIP_MODEL_DOWNLOAD=True,
+            INPUT_DIR=str(tmp_path / "input"),
+            OUTPUT_DIR=str(tmp_path / "output"),
+            CACHE_DIR=str(tmp_path / "cache"),
+        )
+    )
+    assert mgr.is_model_present() is False
+
+
 def test_ensure_model_raises_when_skip_and_missing(tmp_path: Path) -> None:
     mgr = ModelManager(_settings(tmp_path))
     with pytest.raises(FileNotFoundError):

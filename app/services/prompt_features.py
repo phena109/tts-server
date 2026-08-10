@@ -21,21 +21,36 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def prompt_feature_cache_path(cache_dir: Path, prompt_wav: Path) -> Path:
-    """Stable path for a given prompt wav content."""
+def prompt_feature_cache_path(
+    cache_dir: Path,
+    prompt_wav: Path,
+    model_dir: Path | None = None,
+) -> Path:
+    """Stable path for a given prompt wav + model tree.
+
+    CosyVoice2 and CosyVoice3 use different speech tokenizers, so the same
+    prompt wav must not share a cache entry across model generations.
+    """
     prompt_wav = Path(prompt_wav)
-    # Bundled CosyVoice default prompt → stable well-known name (ops can pre-seed).
-    name = prompt_wav.name
-    if name == "zero_shot_prompt.wav" or "zero_shot_prompt" in str(prompt_wav):
-        return Path(cache_dir) / "prompt_features" / "default_zero_shot.pt"
     h = hashlib.sha256()
-    h.update(str(prompt_wav.resolve()).encode())
+    if model_dir is not None:
+        h.update(str(Path(model_dir).resolve()).encode())
+        # Prefer tokenizer filename so v2/v3 never collide even if dirs move.
+        for tok in ("speech_tokenizer_v3.onnx", "speech_tokenizer_v2.onnx"):
+            if (Path(model_dir) / tok).is_file():
+                h.update(tok.encode())
+                break
+    h.update(str(prompt_wav.resolve()).encode() if prompt_wav.exists() else str(prompt_wav).encode())
     try:
         st = prompt_wav.stat()
         h.update(f"{st.st_size}:{st.st_mtime_ns}".encode())
     except OSError:
         pass
-    return Path(cache_dir) / "prompt_features" / f"{h.hexdigest()[:20]}.pt"
+    digest = h.hexdigest()[:20]
+    name = prompt_wav.name
+    if name == "zero_shot_prompt.wav" or "zero_shot_prompt" in str(prompt_wav):
+        return Path(cache_dir) / "prompt_features" / f"default_zero_shot_{digest}.pt"
+    return Path(cache_dir) / "prompt_features" / f"{digest}.pt"
 
 
 def load_prompt_features(path: Path) -> dict[str, Any] | None:
@@ -70,7 +85,7 @@ def ensure_prompt_features(
         logger.warning("Prompt wav missing; skip feature cache", extra={"path": str(prompt_wav)})
         return None
 
-    out = prompt_feature_cache_path(cache_dir, prompt_wav)
+    out = prompt_feature_cache_path(cache_dir, prompt_wav, model_dir=model_dir)
     if out.is_file():
         logger.info("Prompt features cache hit", extra={"path": str(out)})
         return out

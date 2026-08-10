@@ -19,7 +19,7 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Minimum expected sizes (bytes) for CosyVoice3 core weights.
+# Minimum expected sizes (bytes) for core weights.
 # Values are intentionally well below published sizes so minor packing
 # differences still pass, but partial/truncated files fail.
 _COSYVOICE3_REQUIRED: dict[str, int] = {
@@ -31,7 +31,17 @@ _COSYVOICE3_REQUIRED: dict[str, int] = {
     "speech_tokenizer_v3.onnx": 50_000_000,  # published ~969 MB
 }
 
-# CosyVoice / CosyVoice2 fall back markers (older layouts).
+# CosyVoice2 (incl. ASLP-lab Cantonese fine-tunes) core layout.
+_COSYVOICE2_REQUIRED: dict[str, int] = {
+    "cosyvoice2.yaml": 1_000,
+    "llm.pt": 500_000_000,  # published ~2.0 GB
+    "flow.pt": 200_000_000,  # published ~450 MB
+    "hift.pt": 10_000_000,  # published ~83 MB
+    "campplus.onnx": 1_000_000,  # published ~28 MB
+    "speech_tokenizer_v2.onnx": 50_000_000,  # published ~496 MB
+}
+
+# CosyVoice 1 fall back markers.
 _LEGACY_WEIGHT_CANDIDATES: tuple[str, ...] = (
     "llm.pt",
     "llm.onnx",
@@ -41,10 +51,9 @@ _LEGACY_WEIGHT_CANDIDATES: tuple[str, ...] = (
 
 _LEGACY_CONFIG_MARKERS: tuple[str, ...] = (
     "cosyvoice.yaml",
-    "cosyvoice2.yaml",
 )
 
-# Qwen blank encoder weights required by CosyVoice3 yaml overrides.
+# Qwen blank encoder weights required by CosyVoice2/3 yaml overrides.
 _BLANK_EN_WEIGHTS: tuple[str, ...] = (
     "model.safetensors",
     "pytorch_model.bin",
@@ -87,11 +96,15 @@ class ModelManager:
             )
             return False
 
-        # CosyVoice3 is the default product target.
+        # CosyVoice3 layout.
         if (root / "cosyvoice3.yaml").is_file():
             return self._is_cosyvoice3_complete(root)
 
-        # Older CosyVoice 1 / 2 layouts.
+        # CosyVoice2 (default product target: ASLP-lab Yue fine-tunes).
+        if (root / "cosyvoice2.yaml").is_file():
+            return self._is_cosyvoice2_complete(root)
+
+        # Older CosyVoice 1 layout.
         if any((root / name).is_file() for name in _LEGACY_CONFIG_MARKERS):
             return self._is_legacy_complete(root)
 
@@ -249,6 +262,17 @@ class ModelManager:
         for rel, min_size in _COSYVOICE3_REQUIRED.items():
             if not cls._file_ok(root / rel, min_size):
                 return False
+        return cls._blank_en_ok(root)
+
+    @classmethod
+    def _is_cosyvoice2_complete(cls, root: Path) -> bool:
+        for rel, min_size in _COSYVOICE2_REQUIRED.items():
+            if not cls._file_ok(root / rel, min_size):
+                return False
+        return cls._blank_en_ok(root)
+
+    @classmethod
+    def _blank_en_ok(cls, root: Path) -> bool:
         blank = root / "CosyVoice-BlankEN"
         if not blank.is_dir():
             return False
@@ -292,27 +316,32 @@ class ModelManager:
         problems: list[str] = []
         if cls._has_interrupted_download(root):
             problems.append("interrupted *.incomplete / *.lock files")
-        if (root / "cosyvoice3.yaml").is_file() or not any(
-            (root / n).is_file() for n in _LEGACY_CONFIG_MARKERS
+
+        if (root / "cosyvoice2.yaml").is_file() and not (
+            root / "cosyvoice3.yaml"
+        ).is_file():
+            required = _COSYVOICE2_REQUIRED
+        else:
+            required = _COSYVOICE3_REQUIRED
+
+        for rel, min_size in required.items():
+            path = root / rel
+            if not path.is_file():
+                problems.append(f"{rel} (missing)")
+            else:
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    size = 0
+                if size < min_size:
+                    problems.append(f"{rel} ({size} B < {min_size} B)")
+        blank = root / "CosyVoice-BlankEN"
+        if not blank.is_dir():
+            problems.append("CosyVoice-BlankEN/ (missing)")
+        elif not any(
+            cls._file_ok(blank / name, 50_000_000) for name in _BLANK_EN_WEIGHTS
         ):
-            for rel, min_size in _COSYVOICE3_REQUIRED.items():
-                path = root / rel
-                if not path.is_file():
-                    problems.append(f"{rel} (missing)")
-                else:
-                    try:
-                        size = path.stat().st_size
-                    except OSError:
-                        size = 0
-                    if size < min_size:
-                        problems.append(f"{rel} ({size} B < {min_size} B)")
-            blank = root / "CosyVoice-BlankEN"
-            if not blank.is_dir():
-                problems.append("CosyVoice-BlankEN/ (missing)")
-            elif not any(
-                cls._file_ok(blank / name, 50_000_000) for name in _BLANK_EN_WEIGHTS
-            ):
-                problems.append("CosyVoice-BlankEN model weights (missing/undersized)")
+            problems.append("CosyVoice-BlankEN model weights (missing/undersized)")
         return ", ".join(problems) if problems else "unknown"
 
     @staticmethod

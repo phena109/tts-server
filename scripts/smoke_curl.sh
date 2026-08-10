@@ -45,7 +45,7 @@ curl -fsS -X POST "${BASE_URL}/tts-long" \
   -H "Content-Type: application/json" \
   -d '{
     "text": "第一段。這是長文測試。\n\n第二段。我們會自動分句與合併音訊。",
-    "language": "zh",
+    "language": "yue",
     "speed": 1.0
   }' \
   --output "${OUT_DIR}/tts_long.mp3"

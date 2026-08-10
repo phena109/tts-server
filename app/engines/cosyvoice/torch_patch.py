@@ -1,13 +1,16 @@
 """Work around torch SIGILL bugs on Apple Silicon Podman (linux/arm64).
 
-Two separate issues under Apple Virtualization:
+Three separate issues under Apple Virtualization:
 
 1. ``torch.nn.functional.linear`` **without bias** SIGILLs (with a zero bias is OK).
 2. ``torch.matmul`` / ``torch.bmm`` on 3D+ tensors SIGILL (2D and NumPy are fine).
+3. CosyVoice flow encoder attention (``RelPositionMultiHeadedAttention``) uses
+   4D ``torch.matmul`` during ``token2wav`` — same bug, separate from Qwen2.
 
 We:
 * add zero biases to every bias-free ``nn.Linear`` after model load
 * replace Qwen2 ``eager_attention_forward`` QK/AV products with NumPy matmul
+* route global 3D+ ``torch.matmul`` / ``torch.bmm`` through NumPy
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _attention_patched = False
+_matmul_patched = False
 
 
 def ensure_linear_biases(root: Any) -> int:
@@ -96,12 +100,96 @@ def ensure_linear_biases(root: Any) -> int:
     return fixed
 
 
+def _numpy_matmul(a: Any, b: Any) -> Any:
+    """Compute matmul via NumPy (broadcast-compatible with torch for batch dims)."""
+    import numpy as np
+    import torch
+
+    a_dev = a.device
+    a_dtype = a.dtype
+    a_cpu = a.detach().cpu()
+    b_cpu = b.detach().cpu()
+    if a_cpu.is_floating_point():
+        a_arr = a_cpu.float().numpy()
+    else:
+        a_arr = a_cpu.numpy()
+    if b_cpu.is_floating_point():
+        b_arr = b_cpu.float().numpy()
+    else:
+        b_arr = b_cpu.numpy()
+    out = np.matmul(a_arr, b_arr)
+    result = torch.from_numpy(np.ascontiguousarray(out))
+    if a_dtype.is_floating_point:
+        result = result.to(dtype=a_dtype)
+    return result.to(device=a_dev)
+
+
+def install_safe_matmul() -> None:
+    """Route 3D+ torch.matmul/bmm through NumPy to avoid Apple Silicon SIGILL.
+
+    CosyVoice flow attention (``transformer/attention.py``) crashes on
+    ``torch.matmul`` of 4D tensors during ``token2wav``. 1D/2D stay on torch
+    kernels (those are generally safe under Apple Virtualization).
+    """
+    global _matmul_patched
+    if _matmul_patched:
+        return
+
+    import torch
+
+    _orig_matmul = torch.matmul
+    _orig_bmm = torch.bmm
+
+    def safe_matmul(input: Any, other: Any, *, out: Any = None) -> Any:  # noqa: A002
+        if (
+            isinstance(input, torch.Tensor)
+            and isinstance(other, torch.Tensor)
+            and (input.dim() >= 3 or other.dim() >= 3)
+        ):
+            result = _numpy_matmul(input, other)
+            if out is not None:
+                out.copy_(result)
+                return out
+            return result
+        if out is None:
+            return _orig_matmul(input, other)
+        return _orig_matmul(input, other, out=out)
+
+    def safe_bmm(input: Any, mat2: Any, *, out: Any = None) -> Any:  # noqa: A002
+        # bmm is always batch 3D — always use NumPy on this platform.
+        if isinstance(input, torch.Tensor) and isinstance(mat2, torch.Tensor):
+            result = _numpy_matmul(input, mat2)
+            if out is not None:
+                out.copy_(result)
+                return out
+            return result
+        if out is None:
+            return _orig_bmm(input, mat2)
+        return _orig_bmm(input, mat2, out=out)
+
+    def safe_tensor_matmul(self: Any, other: Any) -> Any:
+        return safe_matmul(self, other)
+
+    torch.matmul = safe_matmul  # type: ignore[assignment]
+    torch.bmm = safe_bmm  # type: ignore[assignment]
+    torch.Tensor.matmul = safe_tensor_matmul  # type: ignore[method-assign,assignment]
+    # ``a @ b`` uses __matmul__ / __rmatmul__; patch for older torch paths too.
+    torch.Tensor.__matmul__ = (  # type: ignore[method-assign,assignment]
+        lambda self, other: safe_matmul(self, other)
+    )
+    torch.Tensor.__rmatmul__ = (  # type: ignore[method-assign,assignment]
+        lambda self, other: safe_matmul(other, self)
+    )
+
+    _matmul_patched = True
+    logger.info("Installed SIGILL-safe torch.matmul/bmm (NumPy for 3D+ tensors)")
+
+
 def install_safe_attention() -> None:
     global _attention_patched
     if _attention_patched:
         return
 
-    import numpy as np
     import torch
     import torch.nn as nn
 
@@ -116,10 +204,7 @@ def install_safe_attention() -> None:
 
     def _matmul_bh(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         """Batch-head matmul via NumPy: (B,H,M,K) @ (B,H,K,N) -> (B,H,M,N)."""
-        a_np = a.detach().cpu().float().numpy()
-        b_np = b.detach().cpu().float().numpy()
-        out = np.matmul(a_np, b_np)
-        return torch.from_numpy(out).to(device=a.device, dtype=a.dtype)
+        return _numpy_matmul(a, b)
 
     def eager_attention_forward(
         module: nn.Module,
