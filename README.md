@@ -54,6 +54,7 @@ app/
   utils/         # Chunking, logging, timing
   main.py        # App factory + lifespan
   bootstrap.py   # ensure-model CLI for entrypoint
+  cli.py         # Batch TTS CLI (no HTTP; long jobs)
   ui_server.py   # Static web UI (port UI_PORT)
 web/             # Browser UI (vanilla HTML/JS)
 ```
@@ -74,10 +75,11 @@ web/             # Browser UI (vanilla HTML/JS)
 
 ### 1. Create volumes
 
+Models and cache stay as named volumes. **Generations** go to host `./output`; **speaker refs** go to host `./input` (both bind-mounted into the container).
+
 ```bash
+mkdir -p output input/speakers
 podman volume create cosyvoice-tts-models
-podman volume create cosyvoice-tts-output
-podman volume create cosyvoice-tts-input
 podman volume create cosyvoice-tts-cache
 ```
 
@@ -101,11 +103,13 @@ podman run -d \
   -e LOG_LEVEL=INFO \
   -e MAX_CHARS_PER_CHUNK=200 \
   -v cosyvoice-tts-models:/models \
-  -v cosyvoice-tts-output:/output \
-  -v cosyvoice-tts-input:/input \
+  -v "$PWD/output:/output" \
+  -v "$PWD/input:/input" \
   -v cosyvoice-tts-cache:/cache \
   cosyvoice-tts:latest
 ```
+
+Saved audio appears under **`./output`** on the host. Custom speakers go under **`./input/speakers/<name>.wav`** (same directory as `compose.yaml`).
 
 On first boot the API binds **immediately**; the model downloads in-process in the background (several GB into `/models`). Poll `GET /model/status` or watch the web UI banner while it runs. Subsequent starts skip the download and load the engine at startup.
 
@@ -124,6 +128,49 @@ podman stop cosyvoice-tts
 podman start cosyvoice-tts
 podman rm -f cosyvoice-tts
 ```
+
+### Batch mode (no server — recommended for long CPU jobs)
+
+The HTTP API + web UI are fine for short lines, but on Apple Silicon CPU a longer
+phrase can take **many minutes**. Browsers, reverse proxies, and healthchecks all
+fight that. For “just run until done,” skip the server and use the **batch CLI**
+inside the same image:
+
+```bash
+# One-shot: load model → synthesize → write ./output → exit (no timeout)
+make batch TEXT='你好，我係測試。'
+
+# Longer text → MP3, forced chunking
+make batch TEXT='第一段……第二段……' FORMAT=mp3 LONG=1 OUT=article.mp3
+
+# From a file on the host (./input is bind-mounted)
+echo '你好，我係測試。' > input/sample.txt
+make batch-file FILE=input/sample.txt FORMAT=wav
+
+# Or raw podman (same volumes as the server)
+podman run --rm \
+  --platform=linux/arm64 \
+  --memory=11g --shm-size=1g \
+  -v cosyvoice-tts-models:/models \
+  -v "$PWD/output:/output" \
+  -v "$PWD/input:/input" \
+  -v cosyvoice-tts-cache:/cache \
+  --entrypoint python \
+  cosyvoice-tts:latest \
+  -m app.cli tts --text '你好' --format wav
+```
+
+What this does differently from the server:
+
+| | Server (`make run` / compose) | Batch (`make batch`) |
+|--|--|--|
+| Process | uvicorn + UI, stays up | single Python process, exits when done |
+| Timeouts | client / UI / healthcheck | **none** — runs until synthesis finishes or crashes |
+| Model ensure | background while API is up | **blocking** before TTS |
+| Output | `./output/tts_*.wav` + HTTP body | prints path; always under `./output` |
+| Healthcheck | can kill long jobs indirectly | disabled (entrypoint overridden) |
+
+Interactive shell in the image: `make shell`, then `python -m app.cli tts --help`.
 
 ### Compose
 
@@ -315,8 +362,8 @@ All settings are environment variables (see also `.env.example`).
 | `COSYVOICE_MODEL` | _(empty)_ | Overrides `MODEL_NAME` when set |
 | `MODEL_LOCAL_NAME` | `Cosyvoice2-Yue-ZoengJyutGaai` | Subfolder under `/models` |
 | `MODEL_DIR` | `/models` | Model volume |
-| `OUTPUT_DIR` | `/output` | Saved generations |
-| `INPUT_DIR` | `/input` | Optional speaker refs: `/input/speakers/<name>.wav` |
+| `OUTPUT_DIR` | `/output` | Saved generations (host: `./output`) |
+| `INPUT_DIR` | `/input` | Speaker refs (host: `./input/speakers/<name>.wav`) |
 | `CACHE_DIR` | `/cache` | HF / torch caches |
 | `OUTPUT_FORMAT` | `wav` | Default for `/tts` |
 | `MAX_CHARS_PER_CHUNK` | `200` | Long-form chunk budget |
@@ -338,7 +385,7 @@ All settings are environment variables (see also `.env.example`).
 ### Speakers
 
 - `speaker=default` uses the **bundled** CosyVoice zero-shot prompt wav (good out-of-box experience).
-- Custom speakers: place `myvoice.wav` at `/input/speakers/myvoice.wav` and call with `"speaker": "myvoice"`.
+- Custom speakers: place a short clean reference on the host at `./input/speakers/myvoice.wav` (bind-mounted to `/input/speakers/myvoice.wav` in the container) and call with `"speaker": "myvoice"`.
 
 ### Languages
 
@@ -420,10 +467,9 @@ Errors include exception text under `error`.
 ## Podman command cheat sheet
 
 ```bash
-# Volumes
+# Volumes (output + input are host bind mounts, not named volumes)
+mkdir -p output input/speakers
 podman volume create cosyvoice-tts-models
-podman volume create cosyvoice-tts-output
-podman volume create cosyvoice-tts-input
 podman volume create cosyvoice-tts-cache
 podman volume ls
 podman volume inspect cosyvoice-tts-models
@@ -432,8 +478,8 @@ podman volume inspect cosyvoice-tts-models
 podman build --platform=linux/arm64 -t cosyvoice-tts:latest .
 podman run -d --name cosyvoice-tts --platform=linux/arm64 -p 27755:27755 -p 27756:27756 \
   -v cosyvoice-tts-models:/models \
-  -v cosyvoice-tts-output:/output \
-  -v cosyvoice-tts-input:/input \
+  -v "$PWD/output:/output" \
+  -v "$PWD/input:/input" \
   -v cosyvoice-tts-cache:/cache \
   cosyvoice-tts:latest
 
@@ -509,7 +555,7 @@ No API or client changes required.
 | `default prompt audio missing` | Image must include CosyVoice `asset/zero_shot_prompt.wav`; rebuild |
 | OOM during load or first TTS | CosyVoice CPU needs ~**5–8 GB** resident after load. Raise **both** Podman machine RAM and compose `mem_limit`. On a 16 GB Mac: `podman machine stop && podman machine set --memory 12288 && podman machine start` (leave headroom for macOS). Compose default is `mem_limit: 11g`. The Podman VM often has **no swap** — add a 4 GiB swapfile inside the machine if longer jobs still die: `podman machine ssh` then `sudo dd if=/dev/zero of=/var/swapfile bs=1M count=4096 && sudo chmod 600 /var/swapfile && sudo mkswap /var/swapfile && sudo swapon /var/swapfile`. Confirm real OOM with `podman inspect cosyvoice-tts --format '{{.State.OOMKilled}}'` — if `false` but the process dies mid-TTS, see SIGILL row |
 | Quick TTS dies / empty reply / `Illegal instruction` / looks like “always OOM” | Usually **SIGILL**, not OOM: Apple Silicon Podman torch bugs (bias-less Linear, **3D+/4D matmul** in CosyVoice flow attention, mel/fbank). Logs show `Fatal Python error: Illegal instruction` under `transformer/attention.py` / `token2wav`. Image workarounds: `install_safe_matmul`, Qwen2 eager attention, linear biases, mel patches. Rebuild: `podman compose up -d --build --force-recreate` |
-| Longer TTS “dies” / UI hangs many minutes then fails | Keep `COSYVOICE_STREAM=true` (default). The engine runs LLM inline (thread-safe on this platform) but still **streams token2wav hop windows** so flow/HiFT peak RSS stays ~5–6 GB. Without streaming, longer lines one-shot `token2wav` and can exhaust the 11 g limit. Expect **slow** CPU RTF (~10–40×): ~1–3 min for a short line, ~10+ min for ~100 chars. UI timeouts are 10–30 min — watch the elapsed timer; do not close the tab. Optional tighter hops: `COSYVOICE_TOKEN_HOP_LEN=15` |
+| Longer TTS “dies” / UI hangs many minutes then fails | Prefer **batch mode** (no server): `make batch TEXT='…'` or `make batch-file FILE=input/….txt`. That path has no HTTP/UI timeout. If you stay on the server: keep `COSYVOICE_STREAM=true` (default). Expect **slow** CPU RTF (~10–40×): ~1–3 min for a short line, ~10+ min for ~100 chars. Optional tighter hops: `COSYVOICE_TOKEN_HOP_LEN=15` |
 | `no frontend is available` / wetext ModelScope auth errors | App clones wetext FSTs via ModelScope **git** into `/cache/wetext` and patches `snapshot_download`. Needs `modelscope.cn` once; assets persist on `tts-cache` |
 | Download finished then UI shows `api unreachable` / `NetworkError` | After download the engine loads (~1–2 min). UI should show `loading_engine`, not unreachable. If the banner says `api unreachable` and the container restarts every few minutes, check OOM: `podman inspect cosyvoice-tts --format '{{.State.OOMKilled}} {{.RestartCount}}'`. Raise VM memory, then `podman compose up -d --build --force-recreate` |
 | HF rate limits | Set `HF_TOKEN` or `DOWNLOAD_SOURCE=modelscope` |

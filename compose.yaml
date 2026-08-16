@@ -61,8 +61,10 @@ services:
       PYTHONFAULTHANDLER: "1"
     volumes:
       - tts-models:/models
-      - tts-output:/output
-      - tts-input:/input
+      # Host-visible generations (repo ./output)
+      - ./output:/output
+      # Host-visible speaker refs (repo ./input/speakers/<name>.wav)
+      - ./input:/input
       - tts-cache:/cache
     restart: unless-stopped
     # CosyVoice CPU: ~8GB resident after load; first inference can spike higher.
@@ -80,9 +82,5 @@ services:
 volumes:
   tts-models:
     name: cosyvoice-tts-models
-  tts-output:
-    name: cosyvoice-tts-output
-  tts-input:
-    name: cosyvoice-tts-input
   tts-cache:
     name: cosyvoice-tts-cache
